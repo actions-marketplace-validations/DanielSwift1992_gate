@@ -1,5 +1,56 @@
 # Changelog
 
+## Unreleased
+
+- Child processes install their completion handler before launch and keep it unchanged until release. A child that exits before its caller waits still delivers its completion; the caller no longer replaces a handler while Foundation may be reading it.
+
+- Declared Language module, namespace, source role and intrinsic fields travel to Court v0.5 with their addresses. Document definitions are read by the owner, with excluded bodies disclosed and zero checked applications reported as empty. Native and published benches can reuse pinned owner answers only for the complete matching request; edits re-read notation and invalidate that answer. Changed browser questions run in the carried wasm worker, including pages opened from a file.
+
+- Static benches refuse unsupported writes with an address, a reason and a way back to the source repository. Manifest edits, declarations and table-value writes no longer acknowledge a change they did not make. Declared file drafts still save locally. The bench shows the host's refusal; native serve also refuses a failed disk write instead of reporting success.
+
+- Publish pinned playground inputs as complete snapshots with an atomic rename. Concurrent materializers share a verified winner; a new record keeps earlier readers' paths intact. Warm snapshots still check every recorded byte. Owner-profile and playground failures retain their traceback tails in the public CI annotation.
+
+- Reserve `plain_fragments` as empty in input records: absent and `[]` keep their readings; nonempty requests, wrong types and repeated fields refuse at the record line with a hint to split data and page into files. Native and browser company readers now read each complete declared file. Old suffix requests that previously selected a company fragment must split their source before publishing.
+
+- A leftover `.gate/worlds.from` note no longer requires a definitions record in a self-contained Forms world. Missing declared Git inputs still refuse through the common input resolver at their manifest rows.
+
+- The live bench groups declared file readings through `POST /world`. One HTTP response resolves the inputs it reads once; each delivered input is read and hashed into the buffer sent. Resource reads check their requested inputs; unrelated byte failures are reported when that input, the complete file list or a whole-world verdict is read. Structural input-record failures remain global. Startup shares its reading across vocabulary and the first file, and later opens ask again. No file metadata cache replaces SHA-256.
+
+- Generate the README battery count from registrations with `python3 bin/battery_count.py`. The battery refuses a stale stamp with that repair command before building, and checks the executed count against registered cases.
+
+- Drawing profiles carry CSS and a byte-bound receipt read by the owner's DocumentKit. Native `publish` and `serve` validate the same inputs and shared resources without Python or Node; a stale or damaged delivery refuses before replacing a publication. A live MINE palette can use the labelled browser port, with its owner receipt marked stale. Drawing contract acceptance names the installed receipt; another candidate remains not compared.
+
+- `serve` prints `Ready: <address>` after its socket starts listening; `--json` retains its route record. Table shows an atom's literal `typeName` beside its name, with its source address. Each `/world` response resolves its pinned inputs once and rechecks them on the next request.
+
+- `bin/build-pages.py` now requires an explicit `--source <repository>`, `--worlds`, or both; it no longer creates a demo on every publication. The gate site explicitly selects `examples/codeowners` for its root; `playground/` opens Read me from showcase. Existing root links to `ownership.swift` keep their destination. Historical typed-playground inputs are test-only, and the scene road test is an external harness. `gate demo`, `gate demo org` and `gate demo seam` remain explicit example installers.
+
+- `status` and the live and static bench read declared WorldFile parts as one complete company. Forward references resolve against the full set, requirements are counted once, and refusals retain the source file and line of each part.
+- Remove the showcase-specific `check administer` / `check delete` compiler probes (and their `ask` aliases), the `hire` edit under `diff` / `apply` / `change`, and implicit world discovery through `GATE_SHOWCASE`. These no longer promise a compiler judgement or a roster edit. Select a local world file or manifest; edit declarations as text. Organization owns its `Administer` / `Delete` type laws in showcase. Other changes remain `transfer`, `grant` and `revoke`.
+
+- `status` and `fsck` report `empty · no declared applications` when a Forms world presents no relations, with `verdict: "empty"` and `reason: "no declared applications"` in JSON. They return exit 2 instead of the former `holds` and exit 0. `status --hook` prints the same empty state and permits the commit; refusals and input errors still stop it. The bench, `badge` and `my` carry the empty state too. Memberships count as checked relations alongside equalities and count readings.
+
+## 0.2.5
+
+- Fix stored script execution in the bench shipped in 0.2.3 and 0.2.4: world text, court responses, filenames, notes and literals are rendered as text, attribute values are escaped, and both the live bench and published page authorize only their exact inline programs with CSP hashes and block inline event handlers.
+
+## 0.2.4
+
+- The linux binaries start on today's runners. 0.2.3's linux binary took
+  the Swift runtime from the machine it ran on, built on an image with
+  Swift 6.3.3; the image moved to Swift 6.4 in September, and the binary
+  stopped at `undefined symbol:
+  $s20FoundationEssentials4DataV15_RepresentationON`. Swift on linux
+  keeps no stable ABI between versions, so the runtime and Foundation are
+  linked in now, and the release refuses a linux binary that still links
+  the runner's Swift. The C library stays outside: the x86 binary is built
+  on ubuntu-24.04 by name and starts there and on newer systems.
+- The theory's pin is reached however old it grows. The builds cloned the
+  last 50 commits of the corpus and checked the pin out of them; by
+  October 0.2.3's pin was older than that and the build stopped at
+  "unable to read tree". The whole history comes without file contents,
+  and the pin's own files are fetched on checkout.
+- Nothing else changed: the judge, the courts and every mouth are 0.2.3's.
+
 ## 0.2.3
 
 - The card a stranger reads carries plain words. The marketplace card,

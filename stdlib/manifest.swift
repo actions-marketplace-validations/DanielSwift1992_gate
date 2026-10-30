@@ -2,8 +2,8 @@
 // role: gate's own
 // speaks-for: the-tool
 //
-// This page is not forms. It is the text this tool WRITES when a world
-// needs a layout and has none, and it lives here so that both carriers
+// This page keeps the installed Kind bindings and the text this tool WRITES
+// when a world needs a layout. The template lives here so that both carriers
 // write the same one: a template kept in two places is two texts the day
 // somebody improves one of them.
 //
@@ -13,6 +13,32 @@
 // rather than by counting lines, and `gate stdlib show manifest` shows you
 // both halves as they are.
 //
+// The installed Kind bindings stay on the shelf, above the world template.
+public enum FormsReaderV1: Role {}
+public enum DocumentReaderV1: Role {}
+public enum OrganizationReaderV1: Role {}
+public enum CarriedReaderV1: Role {}
+public enum FormsFile: Role {
+    public typealias Reader = FormsReaderV1
+}
+// Declarations use the same where/count court; page bodies are unchecked.
+// Drawing is a separate consumer of exactly these declared source rows.
+public enum DocumentFile: Role {
+    public typealias Reader = DocumentReaderV1
+}
+public enum WorldFile: Role {
+    public typealias Reader = OrganizationReaderV1
+}
+public enum CarriedFile: Role {
+    public typealias Reader = CarriedReaderV1
+}
+
+// The publication reader takes a pinned catalog of doors and worlds.
+public enum CatalogReaderV1: Role {}
+public enum CatalogFile: Role {
+    public typealias Reader = CatalogReaderV1
+}
+
 // ── what is written into a world begins here ──
 // One list, three columns: whose source a file is, which court reads it,
 // and, for anything taken, the revision it was taken at. gate obeys this
@@ -29,7 +55,17 @@
 // rows taken at the same revision say the same name, not merely the same
 // text. `Written` names another row: the words a page is written in, so the
 // two are read together.
+// A row may declare Language: the key of its format 2 namespace, definitions,
+// imports and vi-owned scope map. Language cannot replace the Kind's reader.
+// docs/LANGUAGES.md states the supported context and the old null-map boundary.
 public protocol Role {}
+// Each Kind names its installed reader. A world's declaration keeps this choice.
+public enum DrawingProfileReaderV1: Role {}
+// A resolved owner receipt (drawing-profile/1), bound to its declared CSS and
+// source inputs. The Swift profile metadata and bindings travel as CarriedFile.
+public enum DrawingProfileFile: Role {
+    public typealias Reader = DrawingProfileReaderV1
+}
 //
 // ── what a world says when it first takes something begins here ──
 

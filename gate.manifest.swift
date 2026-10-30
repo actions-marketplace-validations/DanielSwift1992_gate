@@ -106,11 +106,11 @@ extension GitAtoms { public static var typeName: String { "stdlib/git-atoms.swif
 // on purpose. gate lives under its own court everywhere a court is possible,
 // and this line is the one place where it is not.
 public protocol Theirs {}
-public enum Rev_vi_d74e258 {}
-extension Rev_vi_d74e258 { public static var typeName: String { "verification-is-identification@d74e258" } }
+public enum Rev_vi_7b2ce5b29411 {}
+extension Rev_vi_7b2ce5b29411 { public static var typeName: String { "verification-is-identification@7b2ce5b29411" } }
 public enum TheJudge: Theirs {
     public typealias Kind = JudgeFile
-    public typealias At = Rev_vi_d74e258
+    public typealias At = Rev_vi_7b2ce5b29411
 }
 extension TheJudge { public static var typeName: String { "bin/gate-judge" } }
 
@@ -123,6 +123,26 @@ public enum TheSwiftVein: Mine {
     public typealias Kind = ToolFile
 }
 extension TheSwiftVein { public static var typeName: String { "bin/gate-cli.swift" } }
+
+// The grammar reader and its census are vi's bytes, held together by
+// bin/grammar-law.from and the builder's hashes.
+public enum GrammarLawRevision {}
+extension GrammarLawRevision { public static var typeName: String { "verification-is-identification@05dced31" } }
+public enum TheScopeReader: Theirs {
+    public typealias Kind = CarriedFile
+    public typealias At = GrammarLawRevision
+}
+extension TheScopeReader { public static var typeName: String { "bin/grammar-law/ScopeMap.swift" } }
+public enum TheGrammarReader: Theirs {
+    public typealias Kind = CarriedFile
+    public typealias At = GrammarLawRevision
+}
+extension TheGrammarReader { public static var typeName: String { "bin/grammar-law/GrammarPolicy.swift" } }
+public enum TheGrammarCensus: Theirs {
+    public typealias Kind = CarriedFile
+    public typealias At = GrammarLawRevision
+}
+extension TheGrammarCensus { public static var typeName: String { "bin/grammar-law/policy.json" } }
 
 // AND THE EDITOR THIS BENCH IS WRITTEN WITH. It arrived the way anything of
 // somebody else's should: named, versioned, and unchanged — its own first line
@@ -155,3 +175,12 @@ public enum StdlibDeclare: Mine {
     public typealias Kind = FormsFile
 }
 extension StdlibDeclare { public static var typeName: String { "stdlib/declare.swift" } }
+
+public enum PublicationForms: Mine {
+    public typealias Kind = CarriedFile
+}
+extension PublicationForms { public static var typeName: String { "stdlib/forms-publication.swift" } }
+public enum PublicationTransport: Mine {
+    public typealias Kind = ToolFile
+}
+extension PublicationTransport { public static var typeName: String { "web/publication.js" } }

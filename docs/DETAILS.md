@@ -32,7 +32,8 @@ python3 tests/smoke.py                      # all green, offline
 grep -nE "URLSession|NWConnection|^[[:space:]]*import Network|getaddrinfo" bin/gate-cli.swift
 grep -nE "urllib\.request|^[[:space:]]*import socket|socket\.socket|http\.client|requests\.(get|post|put)" gate
 grep -nE "XMLHttpRequest|new WebSocket|fetch\([[:space:]]*['\"\`]https?:|(src|href)[[:space:]]*=[[:space:]]*['\"]https?:" \
-    web/ui.html bin/judge.js bin/judge-where.js bin/judge-cli.js
+    web/ui.html bin/judge.js bin/judge-cli.js bin/judge-wasm.js \
+    bin/court-wasm/node/vi_court.js bin/court-wasm/web/vi_court.js
 
 # 3. the server listens on the loopback, and nowhere else
 grep -n '0x7f00_0001' bin/gate-cli.swift    # 127.0.0.1, written in, not configured
@@ -55,7 +56,7 @@ reasonable afternoon, which is the point. A tool that checks by reading
 should be checkable by reading.
 
 Two more facts a review leans on, both held by the battery. The CLI's
-imports are a white list, named in the battery itself: four modules of
+imports are a white list, named in the battery itself: five modules of
 the platform's own library, with no package manager and no lockfile in
 the repository. And the one piece that is not text, `bin/gate-judge`, is
 not a dependency: delete it and every court still answers through the node
@@ -149,6 +150,12 @@ head.
   `gate.manifest.swift` and gate obeys it: judgement runs the declared
   list, and both halves are named at their line, a row whose file is not
   there and a file beside them with no row.
+- The forms rows of a layout are judged as worlds: a row joins every row
+  that declares a name it uses and does not declare itself, so a
+  certificate whose gate stands in the next file is judged with that file,
+  and two pages that each declare their own word stay two worlds. The
+  bench page in a browser takes these worlds from `gate serve` when the
+  page is built; an edit made in the page does not recompute them.
 - Tables are inputs and views, never truth: a later CSV edit cannot
   silently reprint the world.
 - Policy is a fact, so it lives beside the world in `gate.policy.swift`: an
@@ -220,7 +227,7 @@ where a certificate compares two of them, and nowhere else.
 
 ## The picture on the cover
 
-`docs/bench.png` is taken by `bin/shoot-bench.sh`: a fresh `gate demo`
+`docs/bench.png` is taken by `bin/shoot-bench.sh`: a copy of the declared `examples/codeowners` world
 world, `gate serve` on a free port, one headless Chrome shot of
 `/ui?f=ownership.swift:89`. That door is not the camera's: any refusal
 address pastes into the browser bar as `?f=file:line`, and the bench
@@ -229,3 +236,39 @@ sha256 of `web/ui.html` as photographed, and the battery holds that hash to
 the working copy: change the bench and the battery goes red until the
 picture is retaken. CI takes a fresh shot on every run and attaches it as
 an artifact.
+
+## Pinned playground worlds
+
+`python3 bin/build-pages.py _site --source examples/codeowners --worlds` publishes gate's declared root and the showcase catalog, at `playground/<id>/index.html`. The pinned `Worlds/Playground/Site/Manifest.swift` stands in THEIRS of every world, including Site. Open it in Bare or Table and follow a record name to `playground/<id>/`; the first ten associations stay in order and the Company and Site source records follow them. The repository site root opens the declared `examples/codeowners` world, with `ownership.swift` and its intentional refusal at line 89, as shown on the cover. `playground/` opens Read me from showcase. For an explicitly selected repository, use `python3 bin/build-pages.py _site --source /path/to/repository`; this command has no default sample. The two options compose: source selects the root, worlds adds the showcase catalog under playground/. With only worlds, the root is not published. World inputs are disclosed beside the judge in the rail. The rail has only MINE and THEIRS; no added tab/provenance strip.
+
+`bin/playground-worlds.from` names the showcase revision, every selected file's SHA-256, the world's compiler theory, the judge and the wasm bytes. `bin/playground-worlds.sh` fetches those revisions directly, with LF checkouts, and checks the files again when its cache is warm. `SHOWCASE_SOURCE` selects a local checkout at the recorded revision; the built site's `worlds-source.json` then says local. A changed selected file is refused.
+
+The compiler theory is pinned by the owner Package.swift; Court v0.5 and its wasm carrier are pinned separately in the world record. Primitive byte parity is checked explicitly. Each world supplies complete source files, module, namespace, imports and the closed intrinsic vocabulary through its Language record; gate translates those addressed fields into vi.court.context/2. These inputs do not become claims merely by being present. `shelf_overrides: false` keeps a standalone dictionary from restating the bench's same-named colours. Organization declares company data and its page in separate files. Company readers consume complete WorldFiles and retain their source addresses; DocumentFiles and DrawingInputs declare the page boundary. `plain_fragments` is reserved empty: absent and `[]` are accepted; nonempty requests, wrong types and repeated fields refuse at the record line with a hint to split data and page.
+
+The page saves reader drafts and their verdicts under their showcase revision, world and file, including refusals. A red Atom edit survives a reload and stays red; the repository bench still writes on holds. Reset clears only that world's texts and layout. Large files keep a lossless splice against the pinned source, so a small edit does not duplicate five megabytes into browser storage. A storage failure is reported as an unsaved draft. The reopened world is judged again; a saved receipt is not evidence about later edits.
+
+The showcase palette preserves its seventeen integer contrast relations as count readings. Atom states its four energy sums through the owner LevelDrop count mechanism with the original triples: eight readings hold; changing BalmerAlphaDrop from 20 to 21 refuses SecondFloorStitch.Right and TwoRoadsOneDrop.Right. Nominal where retains nominal type equality. Complete unchanged Language questions may reuse a pinned owner receipt; the owner check recomputes that receipt with Swift, and changed bytes are judged afresh. A compiled page at the pin is not a compiler check of an edit in the browser.
+
+At scale carries 12,800 people in 68 complete company parts; the owner manifest declares their court and drawing dependencies. Full uses CodeMirror's virtual viewport; Bare and Table project 2,000 source lines at a time, with Previous/Next controls and original addresses. Projection pages change neither a file's buffer nor the declared court input. Drawing remains explicitly not-compared at scale.
+
+`tests/playground.py`, called by the battery, replays the transferred page and kit vectors, compares the original drawing hashes with playground 400b667 and the current drawings with the explicit phrase repair in copy-r3.json, checks native/wasm answers and all seventeen palette slack controls, builds the actual benches through serve, and executes their fetch shim and paged projection functions under node. `tests/bench-width.py` measures the finished pages in headless Chrome or Chromium at 375 and 1280 in both themes; restoring the old no-wrap answer must overflow again. Source and drawing keep their own scrolling surfaces. The live browser walk belongs to review.
+
+The canvas keeps its declared width and height in screen units; the surface scrolls when that world is wider than the pane. This preserves the drawing's text metrics, not a claim that the world has an adaptive layout. The copy note discloses installation and storage instructions on demand, leaving reset available. On a narrow panel a refusal's address precedes its full explanation. Full uses Snug at the reading row and number-to-text seam and Near outside its number; history uses the same Control register as the other gestures. These are explicit layout choices inside the spacing and register contracts, checked at the recorded viewports, not consequences of contrast arithmetic.
+
+The published live path calls the same pageGuards and lint as the vectors, over all owned files with original file/line addresses. Imported names come from the selected pinned module sources and the shared kit vocabulary. The badge distinguishes no readings, supported readings that hold, refusals and an unsupported remainder; edited Swift bodies remain unchecked. Finished HTML and every CSS pass bench_styles.py: interface palette/register declarations come only from the native ladder.css, and editor scroll/measurement constants are named in web/bench-technical.json. Drawing roles belong to the world's explicitly declared profile.
+
+A manifest may name one pinned DrawingProfileFile. The owner computes its role CSS with native DocumentKit and emits an input receipt; native serve and publish authenticate those bytes without an external runtime. The CSS and receipt name explicit roles in both themes, the palette's Legible witnesses and the font's measured table. A stale or damaged input refuses before publication replaces its output; intact unsupported measurements remain unsupported. Font, stylesheet, license and owner receipt have shared content addresses. The finished-site law checks every consumer. [The input format and live MINE boundary](DRAWING-PROFILE.md).
+
+The accepted Drawing contract is pinned by its SHA-256 in bin/drawing-contract.from. Empty and unaccepted contracts retain not-compared with a reason, null contract_pin, zero cases and an actual inputs_digest. Exact owner cases and other inputs keep their separate Drawing comparison; a green relation verdict does not compare a picture with Swift. The palette port is used only for a live MINE edit whose owner receipt has become stale; static publication keeps this structure read-only.
+
+The publisher fetches only the showcase and theory inputs in `bin/playground-worlds.from`. The archived typed-playground 400b667 is migration evidence, fetched only by `tests/playground-baseline.py` from `tests/fixtures/playground-baseline.from`; hashes are checked on cache hits too. Its original corpus, guards, lint and renderer still hold the historical parity and security replay controls. Current guard and lint obligations run against the finished site’s shipped scripts and live edit path. The CODEOWNERS road test is `tests/roadtest.py` with `tests/roadtest.js`: it reads the declared example (or the site named by its `--site` option) and injects its test walk only into a temporary copy. CI runs it before deploying the clean catalog.
+
+## Grouped live readings
+
+The live bench advertises `batch_readings` in `/files`; `POST /world` takes a JSON array of file names and returns a name-to-reading map with `status` and `text`. It is a read operation. The single-file `GET /world?f=` uses the same delivery check. An unavailable or changed taken file has status 409 and an addressed refusal, without source bytes. Older servers and static snapshots keep the single-file path.
+
+A response resolves its v2 input plan once and owns the verified byte buffers until that response ends. A resource request authenticates its requested inputs; the file list and whole-world verdict authenticate the full set. A changed unrelated input does not prevent delivery of a still verified resource, and never earns a whole-world verdict. Structural record errors remain global. The resolver is keyed by the exact manifest and record bytes and layout rows within this operation. Every new request starts empty. Before sending a taken file, the delivery reader hashes the actual buffer it sends; replacement or loss after resolution refuses. Size, mtime and inode are never proof of unchanged bytes. A file can change after the final read: the response describes those verified bytes, not continuous filesystem state at the browser's later display time.
+
+Startup shares an operation's readings across vocabulary and the first opened file. Other neighbors are read after the first projection, in one fresh group. Another opening requests fresh readings. Memory costs the input buffers and the requested text packet for the response; there is no retained server cache of successful reads, TTL or filesystem watcher. The declared record and server process remain trusted; this does not authenticate a malicious owner's choice of new pins or protect a compromised process. Courts and mutable local files do not become an atomic multi-file transaction.
+
+The [boundary law](BOUNDARIES.md) checks declared dependency debt through a pinned owner implementation.

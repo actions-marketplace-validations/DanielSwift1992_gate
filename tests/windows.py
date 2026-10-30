@@ -37,15 +37,32 @@ def run(*args, cwd=None):
     if cwd is not None and not os.path.isdir(cwd):
         return subprocess.CompletedProcess(
             args, 127, "", "the step before this one never made " + cwd)
-    return subprocess.run([*_door, *args], cwd=cwd,
-                          capture_output=True, text=True,
-                          encoding="utf-8", errors="replace",
-                          env=dict(os.environ, PYTHONUTF8="1"))
+    return bounded([*_door, *args], cwd=cwd,
+                   env=dict(os.environ, PYTHONUTF8="1"))
 
 
 def sh(*args, cwd=None):
-    return subprocess.run(list(args), cwd=cwd, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace")
+    return bounded(list(args), cwd=cwd)
+
+
+# ── AND A STEP THAT DOES NOT RETURN IS NAMED, NOT WAITED ON. On 21.10 the vein
+# built and carried its ledger, then this walk sat for hours on windows-latest:
+# a call with no bound turns one stuck step into a job that never speaks. Each
+# call gets the same bound, and the step that hit it is the line that travels.
+STEP_SECONDS = 180
+
+
+def bounded(command, cwd=None, env=None):
+    try:
+        return subprocess.run(command, cwd=cwd, env=env, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace",
+                              timeout=STEP_SECONDS)
+    except subprocess.TimeoutExpired as stuck:
+        said = stuck.stdout or ""
+        said = said.decode("utf-8", "replace") if isinstance(said, bytes) else said
+        return subprocess.CompletedProcess(
+            command, 124, said, "no answer after " + str(STEP_SECONDS) + " s: "
+            + " ".join(os.path.basename(str(part)) for part in command[:4]))
 
 
 def voice(label, proc):
@@ -104,11 +121,22 @@ with tempfile.TemporaryDirectory(prefix="gate-win-") as tmp:
     S.append(("the version names the court this binary was built with",
               "judge built from verification-is-identification" in v.stdout))
 
-    # the certificate court through the port: a shelf page holds
+    # the certificate court through the port: the shelf's page of certificates
+    # holds. The spacing page's laws are numbers, so the count court holds
+    # them, on the corpus's Primitive at the judge's pin, which the vein's
+    # build lays beside the court
     w = sh("node", os.path.join(HERE, "bin", "judge-cli.js"), "judge", "where",
-           os.path.join(HERE, "stdlib", "bench-metrics.swift"))
-    S.append(("the certificate court sits here: the spacing page holds",
+           os.path.join(HERE, "stdlib", "courts.swift"))
+    S.append(("the certificate court sits here: the courts page holds",
               w.returncode == 0 and "THE WHERE holds" in w.stdout))
+    _pin = open(os.path.join(HERE, "bin", "gate-judge.from"), encoding="utf-8").read().strip()
+    c = sh("node", os.path.join(HERE, "bin", "judge-cli.js"), "judge", "count",
+           os.path.join(HERE, "stdlib", "bench-metrics.swift"),
+           os.path.join(HERE, "bin", ".court", _pin, "premise", "Primitive.swift"),
+           "--predicate", "StepsQuestion", "--encoding", "UnaryArithmeticEncoding",
+           "--sigma", "BenchSpacing")
+    S.append(("and the count court sits here: the spacing page holds its readings",
+              c.returncode == 0 and "COUNT holds" in c.stdout))
 
     # the demo world: the first refusal a person sees, with its address
     demo = os.path.join(tmp, "demo")
@@ -209,8 +237,8 @@ with tempfile.TemporaryDirectory(prefix="gate-win-") as tmp:
     verbs = os.path.join(repo, "verbs.swift")
     text = open(verbs, encoding="utf-8").read()
     open(verbs, "w", encoding="utf-8").write(
-        text.replace("public typealias Does = Reads",
-                     "public typealias Does = Writes", 1))
+        text.replace("public typealias Does = Looks",
+                     "public typealias Does = Changes", 1))
     red = run("status", cwd=repo)
     S.append(("a false claim in the kit goes red at its line",
               red.returncode == 1 and "verbs.swift:" in red.stdout))

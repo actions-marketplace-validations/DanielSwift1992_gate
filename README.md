@@ -31,7 +31,7 @@ silence. Either they are equal, or you get the exact point of contact:
 
 ```
 $ gate status
-status: refused 1
+status: refused 1 · 13 equalities
   ownership.swift:89 · Owns_3_carol · Zone_docs against Zone_src: an owner and
                        the path they own must share one zone
 ```
@@ -65,7 +65,7 @@ downloads the pinned release binary, checks its sha256, judges your
 CODEOWNERS and your workflow filters, and prints every refusal at its line:
 
 ```sh
-curl -sL https://raw.githubusercontent.com/DanielSwift1992/gate/main/bin/gate-audit.sh | bash -s v0.2.3 .
+curl -sL https://raw.githubusercontent.com/DanielSwift1992/gate/main/bin/gate-audit.sh | bash -s v0.2.5 .
 ```
 
 Or take the tool itself:
@@ -101,7 +101,7 @@ It uploads nothing and fetches nothing. It observes rather than
 judges: the exit code follows a threshold you declare (`--fail-over 30`),
 never a verdict of ours.
 
-No repository of your own at hand? `gate demo` makes one: a small tree
+No repository of your own at hand? `gate demo` installs the [CODEOWNERS example](examples/README.md): a small tree
 with a CODEOWNERS whose one rule reaches outside its zone, so the first
 thing you see is the refusal above. Everything it makes is committed the
 moment it is made, and `git checkout .` is the whole way back.
@@ -116,7 +116,7 @@ One step checks every CODEOWNERS rule and workflow `paths:` filter
 against the files that actually exist, on every push:
 
 ```yaml
-- uses: DanielSwift1992/gate@v0.2.3
+- uses: DanielSwift1992/gate@v0.2.5
 ```
 
 A rule that points to a deleted or renamed path fails the check, with
@@ -137,6 +137,8 @@ remembers. Here each is a lookup against the file, in milliseconds:
 | Who may merge this, and since when? | convention, and memory | `gate guard merge` · `gate log` |
 | Which commit broke this rule? | bisect by hand, if anyone notices | `git bisect run gate status` |
 | Is anything inconsistent right now? | an audit, quarterly | `gate status`, on every keystroke |
+
+`check`/`ask` reads a declared view. `diff`/`change` previews a transfer, grant or revoke; `apply` keeps it when its judgement holds. Add other declarations by editing the world file in the bench or your editor, then judge the result. Organization’s `Administer` and `Delete` laws belong to its Swift types in showcase and are checked by the compiler there. The world is selected by its local file or manifest.
 
 The names come from a sandbox this repository makes for you; your own
 commands use your own names. You pay once, per name you
@@ -245,9 +247,9 @@ they are, with no project and no build. Git keeps doing what it already
 does best: history, authorship, review, rollback.
 
 The porcelain is deliberately git-shaped: `status/fsck · demo · init · serve ·
-findings · bare · log · survey · drift · check/ask · diff/change · apply ·
-guard · library · mine · theirs · my · declare · seam · attention · aside ·
-import · export · verify · badge · report · stdlib · --version`. A refusal exits
+publish · findings · bare · log · survey · drift · check/ask · diff/change ·
+apply · guard · library · mine · theirs · my · declare · seam · attention ·
+aside · import · export · verify · badge · report · stdlib · --version`. A refusal exits
 non-zero, so hooks and CI need no wrappers, and every command ends by
 naming the one step that comes next, so the whole ladder stays out of
 your head. `gate stdlib show forms-organization` prints any shelf page
@@ -334,13 +336,64 @@ gate.policy.swift
 bin/gate-judge  the judge, one static binary, built at a pin from the
                 public theory corpus, verification-is-identification:
                 github.com/DanielSwift1992/verification-is-identification
-                (bin/build-judge.sh [pin] rebuilds it)
-bin/judge.js · bin/judge-cli.js · bin/judge-where.js
-                both courts as a node port, for machines the binary
-                was not built for, held to it line for line
+                (bin/build-judge.sh [pin] rebuilds it): the certificate
+                and count courts
+bin/organization-judge
+                the company's plain court, built from the theory's
+                showcase, where the policy it reads is declared:
+                github.com/DanielSwift1992/verification-is-identification-showcase
+                at the pin bin/organization-court.from names
+                (bin/build-organization-judge.sh rebuilds it), held to the
+                showcase's organization court contract
+bin/judge.js · bin/judge-cli.js · bin/judge-wasm.js · bin/court-wasm/
+                the courts for machines the binaries were not built for:
+                the plain court as a node port held to bin/organization-judge
+                by organization v0.1 (8/8) and v0.2 (25/25), and the battery on the
+                company's worlds, and the certificate and count courts as the
+                contract's Rust sample, a second implementation built for
+                wasm32 at the pin bin/court-wasm.from records
+                (bin/build-court-wasm.sh rebuilds it), held to the binary by
+                the suite and the battery. The port reads no `where` clause:
+                where and count are the sample's alone. The plain verdict reads
+                the company's fixed table and fragment, including the reference's
+                refusals on foreign forms. Richer inspection records support the
+                bench without imposing additional domain requirements. A zero exit
+                with zero company premises does not validate a foreign domain.
+                Passing these finite suites does not establish general equivalence.
+bin/renderer.js · bin/press.js
+                the browser port of DocumentKit, held to the owner's executed
+                Contracts/Drawing/v0.1 through bin/playground-worlds.from.
+                tests/drawing.js compares exact input hashes, SVG bytes and
+                addressed refusals. Unsupported forms refuse instead of drawing;
+                an explicit Backdrop is currently outside this port's subset.
+                DrawingProfile.Contract takes the same pinned owner input.
+                drawing-profile.js compares the current bytes and actual output
+                in both serve and static pages. Exact cases say compared, edits
+                say port-under-contract, and At scale stays not-compared.
+                The published bench also reads its manifest and personal record;
+                that larger input stays port-under-contract even when its SVG
+                equals a native case. No extra source is discarded for comparison.
+                XYZRatioWrite prints the palette's explicit integer scale,
+                without asking Half for a fractional count. This contract does not
+                establish equivalence to arbitrary Swift.
+bin/press-contract.from
+                Press belongs to VI Sources/Court/Press.swift. Its pinned v0.1
+                contract holds press.js to 33 substitution and Character cases,
+                including rubout of a non-BMP or combined character. The bench
+                and the contract use the same applier. Intl.Segmenter supplies
+                Character boundaries; without it the literal press names an
+                unsupported operation and leaves the state alone. The battery
+                runs the owner's driver (tests/press-contract.py); this finite
+                suite grants neither arbitrary Swift coverage nor atomic file
+                publication. bin/drawing.from retains the historical renderer
+                replay, whose old controls still run over the current press.
+bin/grammar-law.from
+                vi's scope reader and compiler-derived grants, pinned together;
+                a world's Language supplies imports, definitions and its own
+                source scope map. [The context contract](docs/LANGUAGES.md).
 bin/gate-cli.swift
                 the CLI, one file of Swift: every verb this tool answers,
-                with the court compiled in at the judge's own pin
+                with the courts compiled in at their own pins
                 (bin/build-cli.sh builds it; the binary is not committed,
                 because every executable line here stays text)
 bin/shelf-into-swift.py
@@ -348,23 +401,74 @@ bin/shelf-into-swift.py
                 carries it: a downloaded gate has no stdlib/ beside it. The
                 pages themselves stay in stdlib/, and the battery holds what
                 the binary carries against them, page for page
-stdlib/         the judge's own words, printed as real Swift files, self-judged
+stdlib/         the judge's own words, printed as real Swift files, each
+                judged by the question it asks: certificates by the where
+                court, the bench's numbers by the count court against the
+                corpus's Primitive at the pin, and a page that claims
+                nothing is said to claim nothing
+bin/playground-worlds.sh
+                the showcase worlds at bin/playground-worlds.from: every selected
+                file has its SHA-256, checked again on a cache hit. The compiler's
+                theory and the court's pin are recorded separately there.
+bin/build-pages.py
+                builds an explicitly named repository or the pinned catalog;
+                commands are in docs/DETAILS.md. The worlds mode publishes the
+                worlds from the pinned Site/Manifest.swift, read in THEIRS, with
+                serve's recorded answers. playground/ opens Read me in that
+                same bench. CI selects examples/codeowners for gate's own site
+                root, the world shown on the cover. Each pinned showcase world keeps
+                its own saved files by revision, world and file. Page bodies at
+                the pin compile in showcase; browser edits have no Swift proof.
+                Editable static worlds keep reader text with its reading, including
+                refusals. Selected repositories keep complete file drafts;
+                large drafts in pinned worlds keep lossless source splices.
+                Reopening judges the text again. Previous browser drafts stay readable.
+                This does not write the repository:
+                serve writes a file only when that file holds.
+                Static pages keep file drafts, not structural writes: changing
+                the manifest, declaring a file or answering a table value
+                refuses with an address. Change the source with gate serve and
+                publish again. A failed disk write in serve refuses too.
+                A mixed company page names its data boundary explicitly; the
+                company court reads below it, at the original line addresses.
+                SHOWCASE_SOURCE names a local source at the pin; the published
+                worlds-source.json says local. The default fetches the public pin.
+bin/drawing-profile.js
+                the browser transport for the owner's resolved profile, and
+                the labelled port for a live MINE palette. Native publish and
+                serve check the owner's input hashes and carry its CSS.
+                Font, license and receipt have shared hash addresses.
 web/ui.html     the workbench; bin/judge.js judges it in the browser
 web/codemirror.*  the editor (CodeMirror 5, MIT, vendored)
 demo/           runnable worlds: CODEOWNERS + policy, CSV org, K8s RBAC
 docs/           DETAILS.md, SECURITY.md, CHANGELOG.md, NOTICE.md, and
                 the cover's picture with its provenance
-tests/smoke.py   the battery: 575 checks this repository holds itself
+tests/smoke.py   the battery: 750 checks this repository holds itself
                  to, end-to-end runs through judge parity through
-                 documentation contracts; the definition of green
+                 documentation contracts; one part of green
+tests/playground_runner.py the published-world contracts on Linux and macOS
 tests/windows.py the Windows measure: the reviewer's road as asserts
 ```
+
+The battery count is generated from its registrations by
+`python3 bin/battery_count.py`. Run that command after adding checks or
+merging branches. The tool also has a read-only verification mode, listed in its help.
+The battery checks it before building and compares the run with the registered
+cases at the end. A run without swiftc says it is short and stays red.
+The finished-page width check needs headless Chrome or Chromium. It reads every published bench at 375 and 1280 in both themes, and must catch the old answer that would not wrap.
+The court contract totals below describe pinned suites, separately checked
+by the battery; they are not additional battery totals.
+The process-lifetime control compiles the shipping launch helper against a lifecycle witness: completion during or after launch is kept, a failed launch throws, and publishing before installing the handler or replacing it afterwards refuses. Its source guard keeps zero-argument process launches and handler writes at that one door; it is not a statistical crash test.
+
+Each decision prints a `TIMING` record: seconds since the preceding decision and elapsed time for the run. The first includes the CLI build and setup. The healthy CLI is built once; the changed-source refusal control still gets its own build. The full battery keeps a forty-minute deadline.
+
+Green means both the battery and the published world contracts on Linux and macOS hold. `tests/playground_runner.py` takes an explicit deadline and log destination, recorded in the workflow. Every result publishes a bounded phase and cost summary: a notice on success, an error with the active source and longest readings before the tail on refusal.
 
 ## what runs today, and what is next
 
 ```
 $ gate badge
-badge: 189 claims · holds
+badge: 179 claims · holds
 ```
 
 The badge is this repository's own, and the judge re-counts it on every
@@ -372,8 +476,10 @@ run.
 
 Working prototype under active development, MIT licensed: see LICENSE,
 and docs/NOTICE.md for the bundled pieces and their terms. The judge is a
-native binary with a versioned verdict contract (canon v2). The CLI is
-one file of Swift, built into a single binary the way git is one tool.
+native binary, and each of its courts has a versioned canon: the plain
+court two, the certificate court four, and the count court its own
+question (stdlib/courts.swift). The CLI is one file of Swift, built into a single
+binary the way git is one tool.
 We want to hear
 about a wrong verdict before anything else: see docs/SECURITY.md.
 
@@ -382,9 +488,7 @@ bin/build-cli.sh, and the bench is a page. `gate` is a shim that finds that
 binary, so a clone that has not built one says so in a sentence with the
 two ways out. The judge is a native binary built for one platform: `bin/gate-judge`
 here is `Mach-O arm64`, and on any other machine it does not execute. On
-such a machine node runs both courts instead: `bin/judge-cli.js` runs the
-plain court, `bin/judge-where.js` runs the certificate court, both ported
-line for line, and the battery holds the port to the binary's own lines.
+such a machine node runs the courts instead: `bin/judge-cli.js` runs the plain court, ported line for line, and hands `judge where` and `judge count` to `bin/judge-wasm.js`, the contract's Rust sample built for wasm32 at the pin `bin/court-wasm.from` records. The battery reads the owner's byte-bound suites through `bin/court-contract.from` at the same pin as both carriers: v0.1 13/13, v0.2 12/12 and v0.3 38/38. The third release keeps LF, CRLF and CR on the same logical lines, including refusals; a changed input hash or split carrier pin refuses before the comparison. Agreement on these finite cases does not claim whole-language equivalence.
 `gate --version` says which court ran on your machine. On macOS, CI runs
 the full battery on every push. On Windows, CI builds this same one file
 into that platform's own binary on every push, asks it what it carries, and
@@ -400,3 +504,32 @@ Roadmap, next: apply routing over the declared
 layout · more domain forms.
 
 Something drifts? Gate it
+
+Publish a declared repository with `gate publish /path/to/repository -o /path/to/site`.
+The current binary delivers `publication/1` with declared `ReadOnly` or `ReaderDraft`, including the bench,
+stdlib, browser court and an optional owner-resolved drawing profile. `NoDrawing`
+selects none; a pinned `DrawingProfileFile` names the owner's CSS and input receipt.
+It needs Git for declared pinned inputs; it
+needs no Python, Node or Swift at publication time. Serve the same repository with
+`gate serve /path/to/repository`. The record format and current supported boundary
+are on `gate stdlib show forms-publication`. The existing `build-pages.py` showcase
+recipe still builds gate's own showcase site.
+
+The [profile input](docs/DRAWING-PROFILE.md) binds the actual palette, bindings,
+font, metrics and license. A changed input needs another reading at the owner.
+
+`ReaderDraft` keeps browser text and its current reading, including refusals. The plan grants this only to its writable inputs; source files, taken inputs and publication structure stay unchanged. `ReadOnly` grants no browser drafts.
+
+Draft keys follow the declared Publication, world and plan identities. Each record binds its base inputs digest; a changed base or damaged envelope yields the source text, never stored JSON or a splice over different bytes. The saved reading remains in the record, but reopening reads again rather than displaying that reading as current. Reset affects this namespace and its legacy records bound by an immutable public pin.
+
+The older Pages carrier has no declared Publication. It uses a compatibility snapshot namespace derived from its recorded input bytes and origin, and the same storage module, writer and digest. An immutable public pin can recover its older scoped records. Local snapshots and unscoped ordinary keys (`gate.pages.<file>` and `gate.reader-draft.v1.<file>`) cannot prove that base: their old values remain stored and are not automatically applied or deleted. This boundary does not give the older carrier a publication/1 identity or complete edit parity.
+
+
+An unfinished declaration keeps its text with an addressed remainder. A Language without a prepared browser court is delivered for reading: the plan grants no writes in that world, and an attempted edit keeps the native refusals with an unsupported answer. DocumentFile is currently a drawing input and is also outside the writable set; the policy-level editor can remain open, but the API refuses that write. The legacy Pages carrier still has its own context/definitions, guards and translation; Publication reads prepared context/2 requests from ReadPlan and grants no edit without that reader. Their storage module is shared, not their complete orchestration. The legacy ReadOnly guard still has no declared source in its ordinary serve snapshot; the declared policy is delivered through native Publication. These are migration boundaries, not full edit parity.
+
+Legacy snapshot readings do not need Web Crypto. Saving a reader draft needs it: without it the write refuses at the file address and keeps existing storage unchanged. The draft badge says `read again on open`; the recorded answer is not a current reading.
+
+The Publication carrier checks delivery with Web Crypto over HTTPS or localhost;
+a missing capability or damaged resource removes the verdict.
+
+The [boundary law](docs/BOUNDARIES.md) checks declared dependency debt through a pinned owner implementation.

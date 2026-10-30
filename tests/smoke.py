@@ -16,9 +16,20 @@ CLI_HERE = os.path.join(HERE, "bin", "gate-cli")
 VEIN = os.path.join(HERE, "bin", "gate-cli.swift")
 DEMO = os.path.join(HERE, "demo")
 STDLIB = os.path.join(HERE, "stdlib")
+sys.path.insert(0, os.path.join(HERE, "bin"))
+from battery_count import Registry, RegistryError, stamp as stamp_battery
 
 
-def run(*args, cwd=None):
+def palette_holds(answer):
+    ledger = json.load(open(os.path.join(HERE, "tests", "fixtures", "bench-obligations.json")))
+    expected = {x["id"] for x in ledger["pages"]["bench-palette"]["claims"] if x["route"] == "unsupported"}
+    rows = answer.get("unsupported", [])
+    return (not expected and answer.get("verdict") == "holds" and not answer.get("refusals")
+            and len(rows) == len(expected) and {x.get("id") for x in rows} == expected
+            and all(x.get("address") and x.get("reason") for x in rows))
+
+
+def run(*args, cwd=None, expected_code=None):
     # ── AND THE ANSWER MAY BE ON EITHER CHANNEL. A verb that cannot answer here
     # says so on stderr with a code, which is this tool's canon, and this helper
     # read stdout alone: every check that met a non-answer got the fallback
@@ -27,6 +38,20 @@ def run(*args, cwd=None):
     # equal sentences a difference, which is the reader being blind rather than
     # the two surfaces being apart.
     r = subprocess.run([GATE, *args, "--json"], capture_output=True, text=True, cwd=cwd)
+    # The exit is part of an answer, before JSON selects either channel.
+    # A file reader must not replace a failed producer's reason with ENOENT.
+    if expected_code is not None:
+        if r.returncode != expected_code:
+            # CI annotations select FAIL before a bounded traceback tail.
+            # Keep the command and exit there; the assertion keeps both channels whole.
+            reason = next((line for line in (r.stderr or r.stdout).splitlines() if line.strip()), "no output")
+            print("FAIL gate " + " ".join(args) + " in " + str(cwd)
+                  + ": expected exit " + str(expected_code) + ", got " + str(r.returncode)
+                  + "; " + reason[:512], flush=True)
+        assert r.returncode == expected_code, (
+            "gate " + " ".join(args) + " in " + str(cwd)
+            + ": expected exit " + str(expected_code) + ", got " + str(r.returncode)
+            + "\nstdout:\n" + r.stdout + "\nstderr:\n" + r.stderr)
     for said in (r.stdout, r.stderr):
         try:
             return r.returncode, json.loads(said)
@@ -51,6 +76,10 @@ def seams_here_probe(folder):
 
 
 class Checks(list):
+    def __init__(self, started):
+        super().__init__()
+        self.started = self.previous = started
+
     # ── A CHECK SPEAKS WHEN IT IS DECIDED, NOT WHEN THE RUN IS OVER. Every
     # result used to be held until the end and printed in one go, so a run that
     # died on its way printed NOTHING: four hundred decided checks went down
@@ -61,8 +90,24 @@ class Checks(list):
     # are decided, so a run that stops still says everything it reached and the
     # last name printed is the neighbour of whatever stopped it.
     def append(self, item):
+        now = time.monotonic()
+        # Time between decisions, not an invented duration for assertions which
+        # share a probe. The first interval includes building the CLI and setup.
+        # Keep telemetry before the result: CI carries the indented traceback
+        # immediately after FAIL as one annotation.
+        print("TIMING " + json.dumps(dict(check=item[0], seconds=round(now-self.previous, 6),
+                                         elapsed=round(now-self.started, 6))), flush=True)
         print(("PASS" if item[1] else "FAIL"), item[0], flush=True)
+        self.previous = now
         super().append(item)
+
+
+def failed_output(label, result, limit=4000):
+    """Keep the cause attached to the preceding FAIL in the CI annotation."""
+    if result.returncode:
+        print(f"   {label}: exit {result.returncode}", flush=True)
+        for line in (result.stdout + result.stderr)[-limit:].splitlines()[-30:]:
+            print("   " + line, flush=True)
 
 
 def say(*args, cwd=None):
@@ -198,30 +243,36 @@ GENRE_SAID_HERE = 5
 
 
 def main():
+    started = time.monotonic()
+    # Refuse a stale projection before building or judging. The repair reads
+    # registrations, so a contributor never needs a full run to learn a count.
+    try:
+        stamp_battery(HERE, check=True)
+    except (RegistryError, SyntaxError) as error:
+        print("FAIL", error, flush=True)
+        print("RED", flush=True)
+        sys.exit(1)
     # ── AND THE BATTERY CANNOT HANG IN SILENCE. A judge whose cycle guard is
     # cut does not go red, it goes forever: the mutation was planted, the port
     # span past every clock, and this file would have sat behind it all night,
     # because no subprocess here carries a timeout. One wall clock for the
-    # whole run turns that class into a red line with a sentence. Twenty
-    # minutes is ten times the slowest run on record.
+    # whole run turns that class into a red line with a sentence.
     #
-    # ── AND THE RETURN TICKET IS SPENT. The clock was raised to thirty-five
-    # minutes while two carriers were alive, because every moved verb was judged
-    # twice, once on each side; the note here said to measure the new worst day
-    # after the death commit and put the tenfold margin back. Measured: 144
-    # seconds on the machine that wrote this, with the parity gone and the wait
-    # in every spawn fixed, against about ten minutes before. Twenty-four
-    # minutes is ten times that, which leaves a CI runner room to be four times
-    # slower and still fail only on a hang, which is the one thing this catches.
+    # Forty minutes is the full battery's deadline. Each decision prints its
+    # elapsed interval, including setup in the first interval, so a growing
+    # check has a measured price rather than an assumed tenfold margin. The
+    # price was measured on 22.10: the macOS runner took 22 to 26 minutes for
+    # a battery that runs in about ten on a desk machine, so twenty-four
+    # minutes fired on runner speed rather than on a hang.
     if hasattr(signal, "alarm"):
         def _overdue(sig, frame):
             # os._exit skips every buffer, so the sentence is flushed by hand:
             # a red with no words would be the silence this clock exists against
-            print("FAIL the battery ran past twenty-four minutes: something hangs", flush=True)
+            print("FAIL the battery ran past forty minutes: something hangs", flush=True)
             print("RED", flush=True)
             os._exit(1)
         signal.signal(signal.SIGALRM, _overdue)
-        signal.alarm(1440)
+        signal.alarm(2400)
     # ── AND THE TOOL EXISTS BEFORE THE FIRST QUESTION IS ASKED OF IT. The tool
     # is a binary now and `gate` is a shim that finds one; a fresh clone has
     # none, so every check up to the swiftc block asked a launcher that could
@@ -229,22 +280,28 @@ def main():
     # in the clone. CI checks out clean, and the run went red three hundred
     # times over one missing minute of build. Built here once, at the top,
     # where it is one sentence rather than three hundred.
-    if not os.path.exists(CLI_HERE):
-        if shutil.which("swiftc") is None:
-            print("FAIL this tool is one binary, and there is neither one here nor a "
-                  "swiftc to build it: bin/build-cli.sh, or a release", flush=True)
-            print("RED", flush=True)
-            sys.exit(1)
-        print("   no binary in this clone: building it once, about a minute", flush=True)
-        _built = subprocess.run(["bash", os.path.join(HERE, "bin", "build-cli.sh")],
-                                capture_output=True, text=True)
-        if _built.returncode != 0 or not os.path.exists(CLI_HERE):
+    _cli_build = None
+    _cli_build_sha = None
+    if shutil.which("swiftc") is not None:
+        # Every question uses this revision's carrier. The later build check
+        # reads this receipt instead of compiling the identical healthy source
+        # twice; the deliberately changed carrier still builds separately.
+        print("BUILD this revision's CLI once, about a minute", flush=True)
+        _cli_build = subprocess.run(["bash", os.path.join(HERE, "bin", "build-cli.sh")],
+                                    capture_output=True, text=True)
+        if _cli_build.returncode != 0 or not os.path.exists(CLI_HERE):
             print("FAIL the vein did not build, and every check below would blame "
                   "the tool for it: " + "; ".join(
-                      [l for l in _built.stderr.split("\n") if "error:" in l][:3]
-                      or _built.stderr.strip().split("\n")[-3:]), flush=True)
+                      [l for l in _cli_build.stderr.split("\n") if "error:" in l][:3]
+                      or _cli_build.stderr.strip().split("\n")[-3:]), flush=True)
             print("RED", flush=True)
             sys.exit(1)
+        _cli_build_sha = hashlib.sha256(open(CLI_HERE, "rb").read()).hexdigest()
+    elif not os.path.exists(CLI_HERE):
+        print("FAIL this tool is one binary, and there is neither one here nor a "
+              "swiftc to build it: bin/build-cli.sh, or a release", flush=True)
+        print("RED", flush=True)
+        sys.exit(1)
     tmp = tempfile.mkdtemp(prefix="gate-smoke-")
     # ── AND THIS BATTERY DOES NOT WRITE IN THE HOUSE OF WHOEVER RUNS IT. A personal
     # world lives in `~/.gate/me` unless `GATE_ME` says otherwise, and that was set
@@ -262,7 +319,7 @@ def main():
     # bare machine, a fresh CI runner, has no global user.name for it to lean on
     subprocess.run(["git", "config", "user.name", "A Fixture"], cwd=repo)
     subprocess.run(["git", "config", "user.email", "fixture@client"], cwd=repo)
-    S = Checks()
+    S = Checks(started)
     S.append(("the battery keeps its personal worlds inside its own temp dir",
               os.environ.get("GATE_ME", "").startswith(tmp)))
     # and every fixture directory too, so a run leaves the machine as it found it
@@ -335,6 +392,38 @@ def main():
     # broke the next commit of the repository it had just entered, with a message
     # about a shell. Found by making that commit.
     hook_text = open(os.path.join(repo, ".githooks", "pre-commit")).read()
+    S.append(("entry writes the repository's own hook, including its partial admission rule",
+              hook_text == open(os.path.join(HERE, ".githooks", "pre-commit")).read()
+              and all("exec " + tool + " status --hook" in hook_text
+                      for tool in ("./gatew", "./gate", "gate"))))
+    # A tool that exits 2 without a completed judgement is not partial. Each
+    # lookup road must preserve every failure code, including that one.
+    hook_failures = []
+    for road in ("gatew", "gate", "PATH"):
+        probe = os.path.join(tmp, "hook-failure-" + road)
+        os.makedirs(probe)
+        subprocess.run(["git", "init", "-q", probe], check=True, capture_output=True)
+        os.makedirs(os.path.join(probe, ".githooks"))
+        hp = os.path.join(probe, ".githooks", "pre-commit")
+        open(hp, "w").write(hook_text); os.chmod(hp, 0o755)
+        subprocess.run(["git", "config", "core.hooksPath", ".githooks"], cwd=probe, check=True)
+        bindir = os.path.join(probe, "tools") if road == "PATH" else probe
+        os.makedirs(bindir, exist_ok=True)
+        tool = os.path.join(bindir, "gate" if road == "PATH" else road)
+        for code in (1, 2, 3, 127):
+            open(tool, "w").write('#!/bin/sh\n[ "$*" = "status --hook" ] || exit 99\necho tool-failure-' + str(code) + '\nexit ' + str(code) + '\n')
+            os.chmod(tool, 0o755)
+            blocked = subprocess.run(["git", "-c", "user.email=a@b", "-c", "user.name=A",
+                                      "commit", "--allow-empty", "-m", "probe"], cwd=probe,
+                                     capture_output=True, text=True,
+                                     env=dict(os.environ, PATH=bindir + ":/usr/bin:/bin"))
+            head = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=probe,
+                                  capture_output=True)
+            if not (blocked.returncode != 0 and head.returncode != 0
+                    and "tool-failure-" + str(code) in blocked.stdout + blocked.stderr):
+                hook_failures.append((road, code, blocked.returncode))
+    S.append(("all hook lookup roads stop refusals and arbitrary failures, including exit 2",
+              not hook_failures))
     subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True)
     bare_env = dict(os.environ, PATH="/usr/bin:/bin")
     made = subprocess.run(["git", "-c", "user.email=a@b", "-c", "user.name=A",
@@ -517,7 +606,8 @@ def main():
                           env={**_pin, "TZ": "Pacific/Chatham", "LC_ALL": "en_US.UTF-8",
                                "COLUMNS": "213", "GATE_BLIND_PROBE": "noise"})
     S.append(("the middle is blind to the world: one verdict under two surroundings",
-              _one.returncode == 0 and _two.returncode == 0
+              _one.returncode == _two.returncode == 0
+              and _one.stdout.startswith("status: holds")
               and _one.stdout == _two.stdout))
 
     # ── AND THE JUDGE'S OWN LINKAGE OPENS NO SOCKET. DETAILS hands a reviewer
@@ -608,14 +698,19 @@ def main():
                   for f in _fh.get("findings", []))
               and not any("nothing checks" in f["sentence"]
                           for f in _fh.get("findings", []))))
-    # A GREEN OVER NOTHING SAYS SO, in the one case where that is what happened: a
-    # world of atoms alone, with no certificate over them for any court to read.
+    # A world of atoms alone presents no application to the court.
     bare = os.path.join(tmp, "bare")
     os.makedirs(bare)
     subprocess.run(["git", "init", "-q", bare])
     run("mine", "bench-atoms", cwd=bare)
-    S.append(("a green over nothing says so, in words",
-              "nothing claimed here yet" in say("status", cwd=bare)))
+    S.append(("an empty request says so without holds",
+              say("status", cwd=bare).startswith("status: empty · no declared applications")))
+    empty_forms = subprocess.run([sys.executable, os.path.join(HERE, "tests", "forms-empty.py")],
+                                 capture_output=True, text=True)
+    S.append(("empty forms stay distinct across status, hook, badge and bench",
+              empty_forms.returncode == 0))
+    if empty_forms.returncode:
+        print(empty_forms.stdout + empty_forms.stderr, flush=True)
     os.makedirs(os.path.join(repo, "tables"), exist_ok=True)
     shutil.copy(os.path.join(DEMO, "people.csv"), os.path.join(repo, "tables", "people.csv"))
     shutil.copy(os.path.join(DEMO, "grants.csv"), os.path.join(repo, "tables", "grants.csv"))
@@ -786,8 +881,12 @@ def main():
     # question is the defect this tool is about.
     _bg = run("badge", cwd=HERE)[1]
     S.append(("the badge counts the claims status counts, on a world of forms too",
-              _bg.get("verdict") == "holds"
-              and _bg.get("claims") == run("status", cwd=HERE)[1]["forms"]["equalities"]
+              palette_holds(_bg)
+              # a count reading is a judged claim as an equality is: status counts
+              # both, and so does the badge
+              and _bg.get("claims") == (run("status", cwd=HERE)[1]["forms"]["equalities"]
+                                        + run("status", cwd=HERE)[1]["forms"].get("memberships", 0)
+                                        + run("status", cwd=HERE)[1]["forms"].get("readings", 0))
               and _bg["claims"] > 0
               # and the run of days is not invented where it cannot be replayed:
               # with no path filter the walk took the whole repository's history
@@ -797,14 +896,104 @@ def main():
               and "not counted for one yet" in _bg.get("note", "")
               and _bg.get("mutates") is False))
     S.append(("the survey's fabric is the verdict status gives, on a world of forms too",
-              _sv.get("fabric", {}).get("verdict") == _st.get("verdict") == "holds"
+              palette_holds(_sv.get("fabric", {})) and palette_holds(_st)
               and _sv["fabric"].get("facts", "").endswith("gate.manifest.swift")
               and _sv["fabric"].get("refusals") == len(_st.get("refusals", []))
               # and the step it offers is chosen by the same reading: this said
               # "nothing here is judged yet" over a world that holds
               and "nothing here is judged yet" not in _sv.get("next", "")))
-    c, r = run("check", "administer", "X", "Y", cwd=repo)
-    S.append(("check administer honest error without corpus", "GATE_CORPUS" in json.dumps(r)))
+    # P17/P18: an absent action is not a compiler answer or a roster edit.
+    # The same file/manifest reader and text writer serve renamed declarations.
+    def _retired_call(argv, folder, extra=None):
+        env = {k: v for k, v in os.environ.items() if k != "GATE_SHOWCASE"}
+        env.update(extra or {})
+        result = subprocess.run([GATE, *argv, "--json"], cwd=folder, env=env,
+                                capture_output=True, text=True, timeout=120)
+        for channel in (result.stdout, result.stderr):
+            try:
+                return result.returncode, json.loads(channel)
+            except ValueError:
+                pass
+        return result.returncode, {"raw": result.stdout, "stderr": result.stderr}
+
+    _old_sc = os.path.join(tmp, "retired-showcase")
+    _old_system = os.path.join(_old_sc, "Sources", "Organization", "System")
+    os.makedirs(_old_system)
+    _team = os.path.join(_old_system, "Team.swift")
+    _generated = os.path.join(_old_system, "GeneratedTeam.swift")
+    _reference = open(os.path.join(repo, "gate.swift")).read()
+    open(_team, "w").write("        Granted<Delete<Alice, FinanceVault>>.self         "
+                           "// only the owner, and only at manager rank, deletes\n"
+                           "// a reader's uncommitted work stays here\n")
+    open(_generated, "w").write(_reference)
+    _old_bytes = {p: open(p, "rb").read() for p in (_team, _generated)}
+    _empty = os.path.join(tmp, "retired-empty")
+    os.makedirs(_empty)
+    _without = _retired_call(["status"], _empty)
+    _with = _retired_call(["status"], _empty, {"GATE_SHOWCASE": _old_sc})
+    S.append(("P17: an environment checkout never supplies an undeclared world",
+              _with[0] == _without[0]
+              and _with[1].get("error") == _without[1].get("error")
+              and _with[1].get("facts") == _without[1].get("facts")
+              and _old_sc not in json.dumps(_with[1])))
+
+    _retired = []
+    _world_before = open(os.path.join(repo, "gate.swift"), "rb").read()
+    for _extra in ({}, {"GATE_SHOWCASE": _old_sc}):
+        for _verb in ("check", "ask"):
+            for _kind in ("administer", "delete"):
+                _code, _answer = _retired_call([_verb, _kind, "Alice", "FinanceVault"], repo, _extra)
+                if _code != 1 or _answer.get("error") != "unknown check " + _kind:
+                    _retired.append((_verb, _kind, _code, _answer))
+        for _verb in ("diff", "apply", "change"):
+            _code, _answer = _retired_call([_verb, "hire", "NewPerson", "Manager", "Finance",
+                                           "Ada", "Lovelace", "Y1815", "OnSite"], repo, _extra)
+            if _code != 1 or _answer.get("error") != "unknown change hire":
+                _retired.append((_verb, "hire", _code, _answer))
+    if _retired:
+        print("   retired action controls:", _retired[:2])
+    S.append(("P17/P18: removed probes and hire refuse without changing either tree",
+              not _retired
+              and open(os.path.join(repo, "gate.swift"), "rb").read() == _world_before
+              and all(open(p, "rb").read() == data for p, data in _old_bytes.items())))
+
+    _named = os.path.join(tmp, "renamed-crew")
+    os.makedirs(_named)
+    _crew = os.path.join(_named, "crew.swift")
+    _text = re.sub(r"\bEmp(\d+)\b", r"Actor\1", _reference)
+    _text = re.sub(r"\bCompany\b", "Guild", _text)
+    open(_crew, "w").write(_text)
+    _mine_code, _ = run("mine", "crew.swift", cwd=_named)
+    _before_status = run("status", cwd=_named)
+    _port = free_port()
+    _server = subprocess.Popen([GATE, "serve", str(_port), "--no-open"], cwd=_named,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _text_ok, _text_error = False, None
+    try:
+        import urllib.request as _crew_http
+        wait_serve(_port)
+        _renamed = _text.replace("Actor9000", "Rowan")
+        assert _renamed != _text
+        _request = _crew_http.Request(f"http://127.0.0.1:{_port}/world?f=crew.swift",
+                                     data=_renamed.encode(), method="PUT")
+        _saved = _crew_http.urlopen(_request, timeout=60).status
+        _after_status = run("status", cwd=_named)
+        _text_ok = (_mine_code == 0 and _before_status[0] == 0 and _after_status[0] == 0
+                    and _saved == 200 and open(_crew).read() == _renamed
+                    and not re.search(r"\bEmp\d+\b", _renamed)
+                    and "Rowan" in _renamed)
+    except Exception as _error:
+        _text_error = str(_error)
+    finally:
+        _server.terminate()
+        try:
+            _server.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _server.kill(); _server.wait()
+    if not _text_ok:
+        print("   renamed text world:", _text_error, _before_status)
+    S.append(("P18: an explicit renamed world is edited as text and judged without a roster editor",
+              _text_ok))
 
     # the layout is a fact of the world: the manifest splits, judgement runs the list, guards hold both directions
     split = os.path.join(tmp, "split")
@@ -819,6 +1008,12 @@ def main():
         'extension GrantsFile { public static var typeName: String { "grants.swift" } }\n')
     c, r = run("status", cwd=split)
     S.append(("manifest: cross-file judgement holds", c == 0 and r["verdict"] == "holds"))
+    company_parts = subprocess.run([sys.executable, os.path.join(HERE, "tests", "company-parts.py")], capture_output=True, text=True)
+    S.append(("WorldFile parts present one company with their original source addresses", company_parts.returncode == 0))
+    if company_parts.returncode: print(company_parts.stdout + company_parts.stderr, flush=True)
+    fragments = subprocess.run([sys.executable, os.path.join(HERE, "tests", "plain-fragments.py")], capture_output=True, text=True)
+    S.append(("plain_fragments stays empty and complete files retain their requirements and addresses", fragments.returncode == 0))
+    if fragments.returncode: print(fragments.stdout + fragments.stderr, flush=True)
     open(os.path.join(split, "gate.policy.swift"), "w").write("// policy beside a manifest world\n")
     c, r = run("status", cwd=split)
     S.append(("manifest: the policy file is meta, not a shadow", c == 0 and r["verdict"] == "holds"))
@@ -916,23 +1111,25 @@ def main():
     open(os.path.join(orig, "gate.manifest.swift"), "w").write(
         layout % "    public typealias Written = Two\n")
     c, r = run("status", cwd=orig)
-    S.append(("and holds once the row says it", c == 0 and r["verdict"] == "holds"))
+    S.append(("the declared grammar leaves an empty request, without a refusal",
+              c == 2 and r["verdict"] == "empty" and not r["refusals"]))
 
-    # THE WHERE COURT JUDGES THE FIRST FILE IT IS HANDED AND DROPS THE REST — it
-    # reads the others (an unreadable second path is refused) and then says nothing
-    # about them: palette then metrics reports 119, the same two reversed 14.
-    # Nothing here passes more than one, and the day something does, a verdict
-    # would quietly narrow instead of refusing.
+    # THE WHERE COURT JUDGES THE FIRST FILE IT IS HANDED AND DROPS THE REST — at
+    # canon four the others only lend their definitions (an unreadable second
+    # path is refused) and nothing in them is judged: the courts page then the
+    # metrics page reports the courts page's 9, the same two reversed judge
+    # nothing at all. Nothing here passes more than one, and the day something
+    # does, a verdict would quietly narrow instead of refusing.
     def wide(*paths):
         raw = subprocess.run([os.path.join(HERE, "bin", "gate-judge"), "judge", "where", *paths],
                              capture_output=True, text=True).stdout
         m = re.search(r"(\d+) equalities and \d+ memberships judged", raw)
         return int(m.group(1)) if m else None
-    pal = os.path.join(HERE, "stdlib", "bench-palette.swift")
+    crt = os.path.join(HERE, "stdlib", "courts.swift")
     met = os.path.join(HERE, "stdlib", "bench-metrics.swift")
     S.append(("the where court judges the first file it is given and drops the rest",
-              wide(pal) == wide(pal, met) and wide(met) == wide(met, pal)
-              and wide(pal) != wide(met)))
+              wide(crt) is not None and wide(crt) == wide(crt, met)
+              and wide(met) is None and wide(met, crt) is None))
     gate_src = open(VEIN).read()
     # the same promise, read in the language the tool is written in: every call
     # to the certificate court names one file and nothing else, because handing
@@ -954,7 +1151,7 @@ def main():
     kept_world = open(pw, encoding="utf-8").read()
 
     def both_ways(path):
-        b = subprocess.run([os.path.join(HERE, "bin", "gate-judge"), "judge", path],
+        b = subprocess.run([os.path.join(HERE, "bin", "organization-judge"), "judge", path],
                            capture_output=True, text=True)
         p = subprocess.run(["node", os.path.join(HERE, "bin", "judge-cli.js"), "judge", path],
                            capture_output=True, text=True)
@@ -970,6 +1167,59 @@ def main():
               hb == hp and hbc == hpc == 0 and "THE JUDGE holds" in hb))
     S.append(("and a refusing world in the same words, with the same lines",
               rb == rp and rbc == rpc == 1 and "refuses 2 claim(s)" in rb))
+    # Both immutable organization releases apply to both carriers. v0.2
+    # adds foreign forms and ordered file sequences, not a broader court.
+    _org = subprocess.run([os.path.join(HERE, "bin", "organization-court.sh")],
+                          capture_output=True, text=True).stdout.strip()
+    def _org_contract(prefix, release):
+        return subprocess.run(
+            [sys.executable, os.path.join(_org, "Checks", "organization-contract.py"),
+             "--manifest", os.path.join(_org, "Contracts", "OrganizationCourt", release,
+                                        "contract.json"),
+             "--command-json", json.dumps(prefix), "--implementation-id", "gate battery"],
+            capture_output=True, text=True)
+    for _release, _cases in [("v0.1", 8), ("v0.2", 25)]:
+        _oc_native = _org_contract([os.path.join(HERE, "bin", "organization-judge"), "judge"], _release)
+        _oc_port = _org_contract(["node", os.path.join(HERE, "bin", "judge-cli.js"), "judge"], _release)
+        _expected = f"{_cases}/{_cases} cases matched"
+        S.append((f"the company's plain court answers {_release} through the native carrier and the port",
+                  _oc_native.returncode == 0 and _expected in _oc_native.stdout
+                  and _oc_port.returncode == 0 and _expected in _oc_port.stdout))
+    _court_contract = subprocess.run(
+        [sys.executable, os.path.join(HERE, "tests", "court-contract.py")],
+        capture_output=True, text=True)
+    if _court_contract.returncode:
+        print(_court_contract.stdout + _court_contract.stderr, flush=True)
+    S.append(("both Court carriers answer the owner's three byte-bound contracts",
+              _court_contract.returncode == 0 and "COURT CONTRACT GREEN" in _court_contract.stdout))
+    _wasm_build = subprocess.run(
+        [sys.executable, os.path.join(HERE, "tests", "wasm-build.py")],
+        capture_output=True, text=True, timeout=30)
+    if _wasm_build.returncode:
+        print((_wasm_build.stdout + _wasm_build.stderr)[-3500:], flush=True)
+    S.append(("the wasm builder preserves encoded flags and carries no local source roots",
+              _wasm_build.returncode == 0))
+    # The browser's vocabulary changes inspection records, never the plain
+    # verdict. These witnesses previously invoked extra domain requirements
+    # or admitted entries that the Swift reference refuses.
+    _vocab_probe = r"""
+const fs = require("fs"), path = require("path");
+const { judge } = require(process.argv[1]);
+const root = process.argv[2];
+const V = { seeds: new Set(["Canvas", "ExternalUnit"]), generics: new Set(["Picture"]) };
+const verdict = r => [r.declarations, r.lookups, r.premises, r.refusals];
+const names = ["domain-outside", "vocabulary-outside", "foreign-enum", "Light", "Atom"];
+const ok = names.every(name => {
+    const file = name + ".swift", text = fs.readFileSync(path.join(root, file), "utf8");
+    return JSON.stringify(verdict(judge(file, text))) === JSON.stringify(verdict(judge(file, text, V)));
+});
+console.log(ok);
+"""
+    _vp = subprocess.run(["node", "-e", _vocab_probe, os.path.join(HERE, "bin", "judge.js"),
+                          os.path.join(_org, "Contracts", "OrganizationCourt", "v0.2", "fixtures")],
+                         capture_output=True, text=True)
+    S.append(("a vocabulary for inspection cannot alter the company's plain verdict",
+              _vp.returncode == 0 and _vp.stdout.strip() == "true"))
     # AND THE CERTIFICATE COURT OF THE PORT, HELD TO THE BINARY PAGE FOR PAGE.
     # For a stretch the port refused `judge where` outright, and gate named the
     # forms rows as unjudged wherever the binary could not run; the port sits
@@ -989,17 +1239,19 @@ def main():
               _where_pages != [] and _where_apart == []))
     # and a page that refuses: the same refusal, the same canons, the same exit
     _wbroken = os.path.join(tmp, "where-broken.swift")
+    # the courts page is the shelf's one page of certificates: the bench pages
+    # ask the count court, and their own broken reading is held further down
     open(_wbroken, "w").write(
-        open(os.path.join(HERE, "stdlib", "bench-metrics.swift"), encoding="utf-8").read()
-        .replace("public typealias SnugOverTight = Wider<Snug, Tight, Never>",
-                 "public typealias SnugOverTight = Wider<Tight, Snug, Never>", 1))
+        open(os.path.join(HERE, "stdlib", "courts.swift"), encoding="utf-8").read()
+        .replace("public typealias Binary_carries_where = Carry<BinaryJudge, WhereVerdicts, CanonV4>",
+                 "public typealias Binary_carries_where = Carry<BinaryJudge, WhereVerdicts, CanonV2>", 1))
     _wb2 = subprocess.run([os.path.join(HERE, "bin", "gate-judge"), "judge", "where", _wbroken],
                           capture_output=True, text=True)
     _wn2 = subprocess.run(["node", os.path.join(HERE, "bin", "judge-cli.js"), "judge",
                            "where", _wbroken], capture_output=True, text=True)
     S.append(("and a broken certificate refuses through the port in the binary's words",
               _wb2.returncode == _wn2.returncode == 1 and _wb2.stdout == _wn2.stdout
-              and "be equivalent [Ordered]" in _wn2.stdout))
+              and "be equivalent [CourtCarried]" in _wn2.stdout))
     # ── AND A VALUE THAT DERIVES FROM ITSELF IS REFUSED, NOT ORBITED. The
     # values pass is an explicit worklist with an in-flight set; cut that set
     # and the judge does not go red, it goes forever, which no verdict can
@@ -1049,14 +1301,220 @@ def main():
               and "asks it what it carries" in _rd1
               and "walks the road a reviewer walks" in _rd1
               and "tests/windows.py" in rd
-              and "judge-cli.js" in rd and "judge-where.js" in rd))
+              and "judge-cli.js" in rd and "judge-wasm.js" in rd))
 
-    # self-hosted shelf: the product's own stdlib files are judged by its own judge
+    # self-hosted shelf: the product's own stdlib files are judged by its own
+    # judge, each by the question it asks. A page of certificates asks the where
+    # court and holds there. A page whose laws are numbers declares a count
+    # reading, and the count court checks every answer against the corpus's
+    # Primitive at the judge's own pin, the premise the binary carries. A page
+    # that claims nothing gets the where court's one sentence for a world that
+    # asked it nothing, which is not a refusal and not a green either.
     import glob as _glob
+    _pin = open(os.path.join(HERE, "bin", "gate-judge.from"), encoding="utf-8").read().strip()
+    _premise = os.path.join(HERE, "bin", ".court", _pin, "premise", "Primitive.swift")
+    _nothing = "✗ THE WHERE: no equalities or memberships were judged; no certificate established"
+
+    def count_question(text):
+        m = re.search(r"public enum \w+<[^{]*>:\s*PredicateReading\s*\{([^}]*)\}", text)
+        if not m:
+            return None
+        said = {k: re.search(r"typealias " + k + r" = (\w+)", m.group(1)) for k in
+                ("Predicate", "Encoding", "Sigma")}
+        if not all(said.values()):
+            return None
+        return ["--predicate", said["Predicate"].group(1), "--encoding",
+                said["Encoding"].group(1), "--sigma", said["Sigma"].group(1)]
+
     for sf in sorted(_glob.glob(os.path.join(HERE, "stdlib", "*.swift"))):
-        raw = subprocess.run([os.path.join(HERE, "bin", "gate-judge"), "judge", "where", sf],
-                             capture_output=True, text=True).stdout
-        S.append((f"self-judged: {os.path.basename(sf)}", "holds" in raw and "✗" not in raw))
+        q = count_question(open(sf, encoding="utf-8").read())
+        w = subprocess.run([os.path.join(HERE, "bin", "gate-judge"), "judge", "where", sf,
+                            *([_premise] if q is not None else [])],
+                           capture_output=True, text=True)
+        if q is None:
+            ok = ((w.returncode == 0 and "holds" in w.stdout and "✗" not in w.stdout)
+                  or (w.returncode == 2 and w.stderr.strip() == _nothing))
+        else:
+            c = subprocess.run([os.path.join(HERE, "bin", "gate-judge"), "judge", "count",
+                                sf, _premise, *q], capture_output=True, text=True)
+            n = subprocess.run(["node", os.path.join(HERE, "bin", "judge-cli.js"), "judge",
+                                "count", sf, _premise, *q], capture_output=True, text=True)
+            ok = (((w.returncode == 2 and w.stderr.strip() == _nothing)
+                   or (w.returncode == 0 and "holds" in w.stdout))
+                  and c.returncode == 0 and c.stdout.startswith("✓ COUNT holds")
+                  and (n.stdout, n.returncode) == (c.stdout, c.returncode))
+        S.append((f"self-judged: {os.path.basename(sf)}", ok))
+    # and a count reading with the wrong answer refuses at its name, in the
+    # binary's words through the port as well
+    _cbroken = os.path.join(tmp, "count-broken.swift")
+    open(_cbroken, "w").write(
+        open(os.path.join(HERE, "stdlib", "bench-metrics.swift"), encoding="utf-8").read()
+        .replace("public typealias SnugOverTight = Wider<Snug, Tight, Never>",
+                 "public typealias SnugOverTight = Wider<Tight, Snug, Never>", 1))
+    _cq = count_question(open(_cbroken, encoding="utf-8").read()) or []
+    _cb = subprocess.run([os.path.join(HERE, "bin", "gate-judge"), "judge", "count", _cbroken,
+                          _premise, *_cq], capture_output=True, text=True)
+    _cn = subprocess.run(["node", os.path.join(HERE, "bin", "judge-cli.js"), "judge", "count",
+                          _cbroken, _premise, *_cq], capture_output=True, text=True)
+    S.append(("and a count reading with a wrong answer refuses at its name through both carriers",
+              _cb.returncode == _cn.returncode == 1 and _cb.stdout == _cn.stdout
+              and "'SnugOverTight' count Left = 1, but Answer = 3" in _cb.stdout))
+
+    from d65 import checks as d65_checks
+    for result in d65_checks(HERE, tmp, _premise):
+        S.append(result)
+
+    # The pre-migration question set is frozen separately from today's pages.
+    ledger_bytes = open(os.path.join(HERE, "tests", "fixtures", "bench-obligations.json"), "rb").read()
+    ledger = json.loads(ledger_bytes)
+    S.append(("the bench ledger retains the 113 original IDs with their checked routes",
+              hashlib.sha256(ledger_bytes).hexdigest() == "b5397af335f8558751595e5ebaaef983d5f58e9931a171489aa813195a60dbc6"
+              and {p: len(v["claims"]) for p, v in ledger["pages"].items()} ==
+                  {"bench-metrics": 14, "bench-palette": 77, "bench-registers": 22}))
+    ledger_ok = True
+    for page, entry in ledger["pages"].items():
+        body = open(os.path.join(HERE, "stdlib", page + ".swift"), encoding="utf-8").read()
+        aliases = dict(re.findall(r"^public typealias (\w+) = (\w+)(?:<|\s|$)", body, re.M))
+        generics = dict(re.findall(r"^public typealias (\w+)<[^\n]*?> = (\w+)<", body, re.M))
+        roots = set(re.findall(r"public enum (\w+)<[^{]*>:\s*PredicateReading", body))
+        def reaches_count(head):
+            seen = set()
+            while head not in roots and head in generics and head not in seen:
+                seen.add(head); head = generics[head]
+            return head in roots
+        residual = dict(re.findall(r"^// gate-unsupported: (\w+) \| (.+)$", body, re.M))
+        expected = {x["id"]: x["reason"] for x in entry["claims"] if x["route"] == "unsupported"}
+        ledger_ok = ledger_ok and residual == expected
+        members = {}
+        for owner, fields in re.findall(r"public enum (\w+)<[^\n]*>:\s*Close\s*\{([^}]+)\}", body):
+            members[owner] = dict(re.findall(r"public typealias (\w+) = (\w+)<", fields))
+        def target_head(target):
+            owner, dot, field = target.partition(".")
+            return members.get(aliases.get(owner), {}).get(field) if dot else aliases.get(owner)
+        for item in entry["claims"]:
+            ledger_ok = ledger_ok and all(target_head(target) for target in item["targets"])
+            if item["route"] == "where":
+                ledger_ok = ledger_ok and all(aliases.get(t) in ("Same", "StructuralWider") for t in item["targets"])
+            elif item["route"] == "count":
+                ledger_ok = ledger_ok and all(reaches_count(target_head(t)) for t in item["targets"])
+    S.append(("each original bench ID still reaches its declared where, count or addressed unsupported route", ledger_ok))
+
+    metrics_body = open(os.path.join(HERE, "stdlib", "bench-metrics.swift"), encoding="utf-8").read()
+    def both_nominal(path):
+        words = ["judge", "where", path, _premise]
+        b = subprocess.run([os.path.join(HERE, "bin", "gate-judge"), *words], capture_output=True, text=True)
+        n = subprocess.run(["node", os.path.join(HERE, "bin", "judge-cli.js"), *words], capture_output=True, text=True)
+        return b, (b.returncode, b.stdout, b.stderr) == (n.returncode, n.stdout, n.stderr)
+    b, same = both_nominal(os.path.join(HERE, "stdlib", "bench-metrics.swift"))
+    S.append(("the four nominal spacing certificates hold with the pinned definitions through both carriers",
+              same and b.returncode == 0 and "4 equalities" in b.stdout))
+    changes = [
+        ("AirIsTwoLines", "Same<TwoLines, Plus<Line, Line>>", "Same<TwoLines, Plus<Twice<Line>, Never>>"),
+        ("RunwayIsFourLines", "Same<Runway, Plus<TwoLines, TwoLines>>", "Same<Runway, Plus<Twice<TwoLines>, Never>>"),
+        ("IndentIsTwiceTheEdge", "Same<Indent, Twice<Edge>>", "Same<Indent, Plus<Twice<Edge>, Never>>"),
+        ("PartsStandOffFurtherThanMarks", "StructuralWider<Near, Tight, Unit>", "Same<Near, Plus<Plus<Tight, Unit>, Unit>>"),
+    ]
+    for claim, before, after in changes:
+        fp = os.path.join(tmp, "nominal-" + claim + ".swift")
+        open(fp, "w").write(metrics_body.replace(before, after, 1))
+        b, same = both_nominal(fp)
+        S.append(("equal counts cannot replace the nominal certificate " + claim,
+                  before in metrics_body and same and b.returncode == 1 and claim in b.stdout))
+
+    # Keep the former partial world as a control. Today's palette must hold,
+    # while an explicitly unjudged old requirement must still travel as such.
+    palette_body = open(os.path.join(HERE, "tests", "fixtures", "bench-palette-before-dag.swift"), encoding="utf-8").read()
+    residue_ids = set(re.findall(r"^// gate-unsupported: (\w+) \|", palette_body, re.M))
+    residual_world = tempfile.mkdtemp(dir=tmp)
+    residual_file = os.path.join(residual_world, "palette.swift")
+    open(residual_file, "w").write(palette_body)
+    run("mine", "palette.swift", "--role", "forms", cwd=residual_world)
+    rc, partial = run("status", cwd=residual_world)
+    def addressed_remainder(answer):
+        rows = answer.get("unsupported", [])
+        return {x.get("id") for x in rows} == residue_ids and all(x.get("address") and x.get("reason") for x in rows)
+    S.append(("a palette with 26 unsupported original IDs is partial, never a holding count subset",
+              rc == 2 and partial.get("verdict") == "partial" and not partial.get("refusals") and addressed_remainder(partial)))
+    spoken = say("status", cwd=residual_world)
+    S.append(("human status names every unsupported original palette obligation",
+              spoken.startswith("status: partial") and all(i in spoken for i in residue_ids)))
+    hook_said = subprocess.run([GATE, "status", "--hook"], cwd=residual_world,
+                               capture_output=True, text=True)
+    S.append(("hook status admits partial while printing all addressed residual IDs",
+              hook_said.returncode == 0 and hook_said.stdout.startswith("status: partial")
+              and all(i in hook_said.stdout for i in residue_ids)))
+    only_residue = os.path.join(tmp, "unsupported-only")
+    os.makedirs(only_residue)
+    open(os.path.join(only_residue, "pending.swift"), "w").write(
+        "public enum PendingBasis {}\npublic typealias PendingClaim = PendingBasis\n"
+        "// gate-unsupported: PendingClaim | no court for this question\n")
+    run("mine", "pending.swift", "--role", "forms", cwd=only_residue)
+    ordinary_code, ordinary_answer = run("status", cwd=only_residue)
+    hook_code, hook_answer = run("status", "--hook", cwd=only_residue)
+    S.append(("unsupported without a checked subset stays explicit and may pass the hook",
+              ordinary_code == 2 and hook_code == 0
+              and ordinary_answer.get("verdict") == hook_answer.get("verdict") == "unsupported"
+              and ordinary_answer.get("unsupported") == hook_answer.get("unsupported")
+              and any(x.get("id") == "PendingClaim" for x in hook_answer.get("unsupported", []))))
+    # Exercise the generated hook in git, rather than merely checking a flag.
+    subprocess.run(["git", "init", "-q", residual_world], check=True, capture_output=True)
+    os.makedirs(os.path.join(residual_world, ".githooks"))
+    hp = os.path.join(residual_world, ".githooks", "pre-commit")
+    open(hp, "w").write(hook_text); os.chmod(hp, 0o755)
+    subprocess.run(["git", "config", "core.hooksPath", ".githooks"], cwd=residual_world, check=True)
+    os.symlink(CLI_HERE, os.path.join(residual_world, "gate"))
+    subprocess.run(["git", "add", "palette.swift", "gate.manifest.swift", ".githooks/pre-commit"],
+                   cwd=residual_world, check=True, capture_output=True)
+    commit_args = ["git", "-c", "user.email=a@b", "-c", "user.name=A", "commit", "-m", "palette"]
+    committed = subprocess.run(commit_args, cwd=residual_world, capture_output=True, text=True)
+    partial_head = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=residual_world,
+                                  capture_output=True, text=True)
+    S.append(("a real commit with partial succeeds and prints its full remainder",
+              committed.returncode == 0 and partial_head.returncode == 0
+              and "status: partial" in committed.stdout + committed.stderr
+              and all(i in committed.stdout + committed.stderr for i in residue_ids)))
+    badge_path = os.path.join(tmp, "palette-remainder.svg")
+    rc, badge = run("badge", "-o", badge_path, cwd=residual_world)
+    svg = open(badge_path, encoding="utf-8").read() if os.path.exists(badge_path) else ""
+    human_badge = say("badge", cwd=residual_world)
+    S.append(("the palette badge is partial and carries every residual ID rather than green",
+              rc == 2 and badge.get("verdict") == "partial" and addressed_remainder(badge)
+              and "partial" in svg and "#007D36" not in svg and all(i in svg and i in human_badge for i in residue_ids)))
+    changed = re.sub(r"(public typealias InkLitZ = )(.+)", r"\1Plus<Unit, \2>", palette_body, count=1)
+    open(residual_file, "w").write(changed)
+    rc, modified = run("status", cwd=residual_world)
+    S.append(("the current shelf refuses a changed D65 input even in a copy that still declares an old remainder",
+              changed != palette_body and rc == 1 and modified.get("verdict") == "refused" and addressed_remainder(modified)
+              and any("InkGrey_lit.R" in r.get("claim", "") for r in modified.get("refusals", []))))
+    open(residual_file, "w").write(re.sub(r"^public typealias InkGrey_lit = .+\n", "", palette_body, flags=re.M))
+    rc, missing = run("status", cwd=residual_world)
+    S.append(("deleting an unsupported requirement's relation is an addressed refusal",
+              rc == 1 and any("InkGrey_lit" in x.get("claim", "") and "lost its declared relation" in x.get("claim", "")
+                              for x in missing.get("refusals", []))))
+    subprocess.run(["git", "add", "palette.swift"], cwd=residual_world, check=True, capture_output=True)
+    blocked = subprocess.run(commit_args, cwd=residual_world, capture_output=True, text=True)
+    refused_head = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=residual_world,
+                                  capture_output=True, text=True)
+    S.append(("a refusal with an unsupported remainder still stops a real commit",
+              blocked.returncode != 0 and refused_head.stdout == partial_head.stdout
+              and "status: refused" in blocked.stdout + blocked.stderr
+              and "InkGrey_lit" in blocked.stdout + blocked.stderr))
+    open(residual_file, "w").write(re.sub(r"^// gate-unsupported:.*\n", "", palette_body, flags=re.M))
+    rc, erased = run("status", cwd=residual_world)
+    S.append(("removing the old annotations exposes the current shelf's checked D65 laws",
+              rc == 0 and palette_holds(erased) and erased.get("forms", {}).get("readings", 0) >= 119))
+    metrics_world = tempfile.mkdtemp(dir=tmp)
+    # An independent namespace asks only this supported question, rather than
+    # overriding shared names in every shipped bench world at once.
+    private_names = set(re.findall(r"^public (?:typealias|enum|protocol) (\w+)", metrics_body, re.M))
+    private_metrics = re.sub(r"\b(?:" + "|".join(sorted(private_names)) + r")\b",
+                             lambda m: "Probe" + m.group(), metrics_body)
+    open(os.path.join(metrics_world, "metrics.swift"), "w").write(private_metrics)
+    run("mine", "metrics.swift", "--role", "forms", cwd=metrics_world)
+    rc, mixed = run("status", cwd=metrics_world)
+    S.append(("forms status borrows Primitive for four nominal certificates alongside numeric readings",
+              rc == 0 and mixed.get("verdict") == "holds" and mixed.get("forms", {}).get("equalities", 0) >= 4
+              and mixed.get("forms", {}).get("readings", 0) >= 10 and not mixed.get("unsupported")))
 
     # one reading of the grammar: the SAME parser that judges also carries the
     # kind of every axis and gate parameter, so a bench can be offered exactly
@@ -1455,24 +1913,64 @@ def main():
                   for t in _saids} and len(_saids) == 4))
     _fx = os.path.join(HERE, ".github", "action-fixtures")
     _aenv = {**os.environ, "GATE_AUDIT_BIN": GATE, "GATE_CLI": CLI_HERE}
-    def _audit(tree):
-        return subprocess.run(["bash", os.path.join(HERE, "bin", "gate-audit.sh"),
-                               "vLOCAL", tree],
-                              capture_output=True, text=True, timeout=180, env=_aenv)
+    _aout = tempfile.mkdtemp(prefix="gate-audit-out-")
+    def _audit(tree, binary=None):
+        said = os.path.join(_aout, str(len(os.listdir(_aout))))
+        open(said, "w").close()
+        env = {**_aenv, "GITHUB_OUTPUT": said}
+        if binary:
+            env["GATE_AUDIT_BIN"] = binary
+        run = subprocess.run(["bash", os.path.join(HERE, "bin", "gate-audit.sh"),
+                              "vLOCAL", tree],
+                             capture_output=True, text=True, timeout=180, env=env)
+        run.refusals = open(said, encoding="utf-8").read().strip()
+        return run
     _adead = _audit(os.path.join(_fx, "dead"))
     S.append(("a dead row refuses the audit at its address",
               _adead.returncode != 0
-              and "::error file=CODEOWNERS,line=2::" in _adead.stdout))
+              and "::error file=CODEOWNERS,line=2::" in _adead.stdout
+              and _adead.refusals == "refusals=1"))
     _aclean = _audit(os.path.join(_fx, "clean"))
     S.append(("a clean tree holds the audit, and both halves are said aloud",
               _aclean.returncode == 0
               and "import codeowners" in _aclean.stdout
-              and "import workflows: holds" in _aclean.stdout))
+              and "import workflows: holds" in _aclean.stdout
+              and _aclean.refusals == "refusals=0"))
+    # ── AND A TOOL THAT DOES NOT ANSWER IS NOT A REFUSAL. On 19.10 the
+    # published binary went red over the dead tree with no address at all, and
+    # the `action` job's negative control took that red for the refusal it
+    # stands on. Each answer is read as an exit and a first line that go
+    # together: a binary that cannot say its version, one that exits 0 over
+    # rubbish, and one that says its version and then dies on the second half
+    # are each said aloud as the tool not answering, red, with no refusal
+    # counted, so the control can tell the two reds apart.
+    _afake = tempfile.mkdtemp(prefix="audit-fakes-")
+    open(os.path.join(_afake, "rubbish"), "w").write("#!/bin/sh\necho rubbish; exit 0\n")
+    open(os.path.join(_afake, "dies"), "w").write(
+        "#!/bin/sh\ncase \"$1\" in\n"
+        "  --version) echo 'gate 0.0.0 · judge sha256:x'; exit 0 ;;\n"
+        "  import) [ \"$2\" = codeowners ] && { echo 'import codeowners: holds · 1 ms'; exit 0; }\n"
+        "          echo 'Segmentation fault' >&2; exit 139 ;;\n"
+        "esac\n")
+    for _f in ("rubbish", "dies"):
+        os.chmod(os.path.join(_afake, _f), 0o755)
+    _anot = {"false": _audit(os.path.join(_fx, "dead"), shutil.which("false") or "/usr/bin/false"),
+             "rubbish": _audit(os.path.join(_fx, "dead"), os.path.join(_afake, "rubbish")),
+             "dies": _audit(os.path.join(_fx, "clean"), os.path.join(_afake, "dies"))}
+    shutil.rmtree(_afake, ignore_errors=True)
+    S.append(("a tool that does not answer as gate is said so, and counts no refusal",
+              all(r.returncode == 1
+                  and "did not answer as gate answers" in r.stdout
+                  and "::error file=" not in r.stdout
+                  and r.refusals == "refusals=0" for r in _anot.values())
+              and "(exit 139): Segmentation fault" in _anot["dies"].stdout
+              and "(exit 0): rubbish" in _anot["rubbish"].stdout))
     _abare = _audit(tempfile.mkdtemp(prefix="gate-audit-bare-"))
     S.append(("a tree declaring nothing is not refused, and says so twice",
               _abare.returncode == 0
               and "nothing to check on this half" in _abare.stdout
               and "nothing was read" in _abare.stdout))
+    shutil.rmtree(_aout, ignore_errors=True)
 
     # ── AND THE RIM IS A CLOSED SET OF DOORS. The canon says five doors, and a
     # canon nobody counts is a wish: any verb may quietly grow a private spawn
@@ -1492,8 +1990,9 @@ def main():
         "Process()": 11,
         # courtSays on darwin
         "posix_spawn(": 1,
-        # rawOpen's two spellings and courtSays' /dev/null
-        " open(": 3,
+        # rawOpen's two spellings, courtSays' /dev/null, and the file courtSays
+        # keeps a where or count court's stderr in, which at exit 2 is its answer
+        " open(": 4,
     }
     _rim_apart = {t: sum(l.count(t) for l in _rim_code) for t in _rim}
     if _rim_apart != _rim:
@@ -1807,6 +2306,60 @@ def main():
               and _k8dead.returncode == 1
               and "all.yaml:6 · Service web" in _k8dead.stdout
               and "no workload in this tree carries the labels app=gone" in _k8dead.stdout))
+    # a CEL rule split over lines, the operator-CRD shape the field carries
+    # everywhere: the continuation begins with `&&`, and that is the value
+    # going on, never an anchor. The reason a refusal states is itself a
+    # judged sentence: this document must be READ, and a real anchor at a
+    # structural position must still be refused with the anchor's own reason
+    open(os.path.join(_k8, "cel.yaml"), "w").write(
+        "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: cel\nspec:\n"
+        "  rule: (has(self.a) && !has(self.b))\n    && has(self.c)\n"
+        "  template:\n    metadata:\n      labels:\n        app: web\n")
+    _k8cel = subprocess.run([GATE, "import", "k8s", "--tree", "."], cwd=_k8,
+                            capture_output=True, text=True)
+    os.remove(os.path.join(_k8, "cel.yaml"))
+    open(os.path.join(_k8, "anchor.yaml"), "w").write(
+        "apiVersion: v1\nkind: Service\nmetadata:\n  name: a\nspec:\n"
+        "  selector: &sel\n    app: web\n")
+    _k8anc = subprocess.run([GATE, "import", "k8s", "--tree", "."], cwd=_k8,
+                            capture_output=True, text=True)
+    os.remove(os.path.join(_k8, "anchor.yaml"))
+    S.append(("a scalar's continuation line is the value going on, and a real anchor keeps its true refusal",
+              _k8cel.returncode == 0
+              # the CEL document is read whole: its deployment counts as a
+              # workload, and no unread line is reported for cel.yaml
+              and "2 workloads" in _k8cel.stdout and "cel.yaml" not in _k8cel.stdout
+              # the anchor at a structural position still refuses, and the
+              # stated reason is the anchor's own
+              and _k8anc.returncode == 0 and "anchor.yaml" in _k8anc.stdout
+              and "an anchor or an alias" in _k8anc.stdout))
+    # a plain scalar, once begun, owns every deeper line. A markdown bullet
+    # inside a description is the value going on (yaml folds it in), never a
+    # list item; a `key:` line inside one is yaml's own error, and the
+    # refusal must say that instead of reading a key that is not there
+    open(os.path.join(_k8, "bullets.yaml"), "w").write(
+        "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: bullets\nspec:\n"
+        "  description:\n    A field with notes below\n    - first note\n"
+        "    - second note\n  note: starts here\n    - and goes on\n"
+        "  template:\n    metadata:\n      labels:\n        app: web\n")
+    _k8bul = subprocess.run([GATE, "import", "k8s", "--tree", "."], cwd=_k8,
+                            capture_output=True, text=True)
+    os.remove(os.path.join(_k8, "bullets.yaml"))
+    open(os.path.join(_k8, "lie.yaml"), "w").write(
+        "apiVersion: v1\nkind: Service\nmetadata:\n  name: lie\nspec:\n"
+        "  description:\n    plain text first\n    then: a key inside it\n")
+    _k8lie = subprocess.run([GATE, "import", "k8s", "--tree", "."], cwd=_k8,
+                            capture_output=True, text=True)
+    os.remove(os.path.join(_k8, "lie.yaml"))
+    S.append(("a begun scalar owns its deeper lines: bullets are the value, a key inside is yaml's own error",
+              _k8bul.returncode == 0
+              # the bullet document is read whole: its deployment counts, its
+              # bullets are nobody's list items, and no unread line is named
+              and "2 workloads" in _k8bul.stdout and "bullets.yaml" not in _k8bul.stdout
+              # the key inside a scalar refuses with yaml's own reason, at the
+              # file it happened in
+              and _k8lie.returncode == 0 and "lie.yaml" in _k8lie.stdout
+              and "a mapping value inside a plain scalar" in _k8lie.stdout))
     open(os.path.join(_k8, "helm.yaml"), "w").write(
         "apiVersion: v1\nkind: Service\nspec:\n  selector:\n    app: {{ .Values.app }}\n")
     _k8part = subprocess.run([GATE, "import", "k8s", "--tree", "."], cwd=_k8,
@@ -2023,7 +2576,7 @@ def main():
                   ["git", "log", "--format=%ae"], cwd=HERE, capture_output=True,
                   text=True).stdout.split()
               # the rung it was offering is taken, and the ladder moved on
-              and _here_said.get("verdict") == "holds"
+              and palette_holds(_here_said)
               and "gate.policy.swift" not in _here_said.get("next", "")
               # and no rank was invented to make a verb light up. Read from the
               # DECLARATIONS, not the prose: the paragraph explaining why no rank
@@ -2317,7 +2870,7 @@ def main():
         _lkb.terminate()
     S.append(("a link out of the world is not a file of it, and is not served as one",
               # a link that stays inside is an ordinary file of this world
-              _lk_in.get("file") == "link.swift" and _lk_st.get("verdict") == "holds"
+              _lk_in.get("file") == "link.swift" and _lk_st.get("verdict") == "empty"
               # one that leaves is refused where it would be written down
               and _lk_out.get("asks") and "not inside the world" in _lk_out.get("note", "")
               # and the bench serves neither its bytes nor somebody else's in its
@@ -2596,6 +3149,26 @@ public enum MyWatch: AccessLedger {{
               and "VerifiedInDepartment" in x["claim"]]
     S.append(("no ghost address: grants.swift is not blamed for a claim it never makes", not ghosts))
 
+    _line_addresses = subprocess.run([sys.executable, os.path.join(HERE, "tests", "inputs-kind.py"), "--line-addresses"],
+                                     capture_output=True, text=True, timeout=90)
+    S.append(("source addresses keep their LF prefixes in one traversal and answers own their input lifetime",
+              _line_addresses.returncode == 0))
+    failed_output("source addresses", _line_addresses)
+
+    _process_lifetime = subprocess.run([sys.executable, os.path.join(HERE, "tests", "process-lifetime.py")],
+                                       capture_output=True, text=True, timeout=60)
+    if _process_lifetime.returncode:
+        print("   process lifetime:", _process_lifetime.stdout, _process_lifetime.stderr, flush=True)
+    S.append(("every process publishes one completion before launch and never replaces it",
+              _process_lifetime.returncode == 0))
+
+    _report_output = subprocess.run([sys.executable, os.path.join(HERE, "tests", "report-output.py")],
+                                    capture_output=True, text=True, timeout=60)
+    if _report_output.returncode:
+        print("   report output:", _report_output.stdout, _report_output.stderr, flush=True)
+    S.append(("a refused audit page names its command's exit and both channels before opening a file",
+              _report_output.returncode == 0))
+
     # ── who somebody is, and what merging demands, are facts of the world ──
     grepo = os.path.join(tmp, "policy")
     os.makedirs(os.path.join(grepo, "tables"))
@@ -2619,7 +3192,10 @@ public enum MergePolicy {
                     "-c", "user.name=B", "commit", "-qm", "state the policy in the world"], cwd=grepo)
     c, r = run("status", cwd=grepo)
     S.append(("the world still holds with the policy file beside it", r["verdict"] == "holds"))
-    c, r = run("report", "-o", "audit.html", cwd=grepo)
+    c, r = run("report", "-o", "audit.html", cwd=grepo, expected_code=0)
+    assert os.path.isfile(os.path.join(grepo, "audit.html")), (
+        "gate report -o audit.html in " + grepo
+        + ": exit 0 without its output file; answer: " + json.dumps(r))
     page = open(os.path.join(grepo, "audit.html")).read()
     S.append(("the audit page carries the policy and when it last changed",
               "<h2>Policy</h2>" in page and "merge requires" in page
@@ -2718,8 +3294,8 @@ extension MailBossMine { public static var typeName: String { "boss@corp" } }
               and "not recorded" not in subprocess.run(
                   [os.path.join(ven, "gatew"), "--version"], cwd=ven,
                   capture_output=True, text=True).stdout))
-    # ── AND BOTH COURTS TRAVEL, OR THE CARRY IS HALF A TOOL. `bin/judge.js` went
-    # and `bin/judge-where.js` stayed, over a comment saying a clone on another
+    # ── AND EVERY COURT TRAVELS, OR THE CARRY IS HALF A TOOL. `bin/judge.js` went
+    # and the certificate court stayed, over a comment saying a clone on another
     # platform has a court only if the file that speaks for it is here. The
     # binary hides the hole on the machine that vendored: on any platform it does
     # not run on, which is the whole reason the ports exist, a vendored clone
@@ -2735,10 +3311,394 @@ extension MailBossMine { public static var typeName: String { "boss@corp" } }
     os.rename(_hidden + ".away", _hidden)
     S.append(("a vendored copy carries both courts, so a clone with no binary still judges",
               os.path.exists(os.path.join(ven, ".gate", "bin", "judge.js"))
-              and os.path.exists(os.path.join(ven, ".gate", "bin", "judge-where.js"))
+              and os.path.exists(os.path.join(ven, ".gate", "bin", "judge-wasm.js"))
+              and os.path.exists(os.path.join(ven, ".gate", "bin", "court-wasm", "node", "vi_court_bg.wasm"))
               and os.path.exists(os.path.join(ven, ".gate", "bin", "judge-cli.js"))
               and _po.get("verdict") == "holds"
               and "did not answer in its own canon" not in _portonly.stdout))
+    # and the drawing view's engine travels with the same carry, with its record
+    S.append(("a vendored copy carries the drawing view's engine and its record",
+              all(os.path.exists(os.path.join(ven, ".gate", "bin", f))
+                  for f in ("renderer.js", "press.js", "drawing.from", "press-contract.from", "renderer-security.patch"))))
+
+    _press_suite = subprocess.run([sys.executable, os.path.join(HERE, "tests", "press-contract.py")],
+                                  capture_output=True, text=True, timeout=180)
+    if _press_suite.returncode:
+        print("   Press owner contract:", (_press_suite.stdout + _press_suite.stderr)[-1800:])
+    S.append(("the carried Press matches the pinned owner contract, including whole Characters",
+              _press_suite.returncode == 0 and "33/33" in _press_suite.stdout))
+
+    # Historical transport replay only: the archived renderer and the carried
+    # press still satisfy the old page. Current renderer semantics are held by
+    # showcase Contracts/Drawing/v0.1 (tests/drawing.js in playground.py).
+    _dfrom = open(os.path.join(HERE, "bin", "drawing.from"), encoding="utf-8").read().split("\n")
+    _dpin = _dfrom[0].strip()
+    _dsrc = os.environ.get("PLAYGROUND_SOURCE")
+    _dplay = os.path.join(tmp, "playground-at-pin")
+    if _dsrc:
+        shutil.copytree(_dsrc, _dplay, ignore=shutil.ignore_patterns(".build", ".git"))
+    else:
+        os.makedirs(_dplay)
+        subprocess.run(["git", "-C", _dplay, "init", "-q"], capture_output=True)
+        subprocess.run(["git", "-C", _dplay, "config", "core.autocrlf", "false"], capture_output=True)
+        subprocess.run(["git", "-C", _dplay, "fetch", "-q", "--depth", "1",
+                        "https://github.com/DanielSwift1992/typed-playground", _dpin], capture_output=True)
+        subprocess.run(["git", "-C", _dplay, "checkout", "-q", "FETCH_HEAD"], capture_output=True)
+    # The local security delta is replayed over the named upstream bytes,
+    # then the original playground checks still run over the resulting engine.
+    _drawing_patch = subprocess.run(["git", "-C", _dplay, "apply",
+        os.path.join(HERE, "bin", "renderer-security.patch")], capture_output=True)
+    # Press may change under its owner's versioned contract; historical byte
+    # equality would prohibit the Character repair. Replay the old functional
+    # controls below and ask the current owner suite independently.
+    for f in ("press.js",):
+        if os.path.exists(_dplay):
+            shutil.copy(os.path.join(HERE, "bin", f), os.path.join(_dplay, f))
+    _dcheck = subprocess.run(["node", "check.js"], cwd=_dplay, capture_output=True, text=True) \
+        if os.path.exists(os.path.join(_dplay, "check.js")) else None
+    _dsaid = (_dcheck.stdout + _dcheck.stderr) if _dcheck else "the playground was not fetched"
+    if not (_dcheck and _dcheck.returncode == 0):
+        print("   the playground's checks over the drawing engine:", _dsaid.strip().split("\n")[-1][:120])
+    S.append(("the archived drawing engine and current press pass the historical playground checks at the pin",
+              _drawing_patch.returncode == 0 and _dcheck is not None and _dcheck.returncode == 0
+              and "29/29" in _dcheck.stdout))
+
+    # ── AND THE DRAWING VIEW IS OFFERED TO A WORLD THAT PRESENTS A CANVAS, AND
+    # TO NO OTHER. The page's own `drawable` is read off ui.html and run over
+    # two files of the playground fetched above: the atom's pages, which present
+    # Diagram, draw one canvas through the engine with the kit's vocabulary and
+    # the world's declarations beside them. The declarations alone have no
+    # canvas, but their world does; a world without a canvas gets no button.
+    _dv = {}
+    if os.path.exists(os.path.join(_dplay, "corpus", "worlds", "AtomPages.swift")):
+        _dprobe = os.path.join(tmp, "drawing-probe.js")
+        open(_dprobe, "w", encoding="utf-8").write(r"""
+const fs = require("fs");
+const ui = fs.readFileSync(process.argv[2], "utf8");
+const { judge } = require(process.argv[3]);
+const { renderAll, kitVocabulary } = require(process.argv[4]);
+const grab = (name) => {
+    const at = ui.indexOf("function " + name + "(");
+    let d = 0;
+    for (let j = ui.indexOf("{", at); j < ui.length; j++) {
+        if (ui[j] === "{") d++;
+        else if (ui[j] === "}" && --d === 0) return ui.slice(at, j + 1);
+    }
+};
+eval(ui.slice(ui.indexOf("const CANVAS_FORMS"), ui.indexOf("\n", ui.indexOf("const CANVAS_FORMS"))).replace("const CANVAS_FORMS", "globalThis.CANVAS_FORMS"));
+eval(grab("drawable"));
+const pages = fs.readFileSync(process.argv[5], "utf8"), world = fs.readFileSync(process.argv[6], "utf8");
+const own = fs.readFileSync(process.argv[7], "utf8");
+const out = {};
+out.pagesDrawable = drawable(judge("AtomPages.swift", pages, kitVocabulary).parsed);
+out.atomAloneDrawable = drawable(judge("Atom.swift", world, kitVocabulary).parsed);
+out.atomWithPagesDrawable = drawable(judge("Atom.swift", world + "\n" + pages, kitVocabulary).parsed);
+out.ownDrawable = drawable(judge("gate.manifest.swift", own).parsed);
+const read = judge("AtomPages.swift", pages + "\n" + world, kitVocabulary).parsed;
+const drawn = renderAll(read.declarations, read.order, read.literals, read.topAliases);
+out.canvases = drawn.canvases.length; out.errors = drawn.errors.length;
+console.log(JSON.stringify(out));
+""")
+        _dp = subprocess.run(["node", _dprobe, os.path.join(HERE, "web", "ui.html"),
+                              os.path.join(HERE, "bin", "judge.js"), os.path.join(HERE, "bin", "renderer.js"),
+                              os.path.join(_dplay, "corpus", "worlds", "AtomPages.swift"),
+                              os.path.join(_dplay, "corpus", "worlds", "Atom.swift"),
+                              os.path.join(HERE, "gate.manifest.swift")],
+                             capture_output=True, text=True)
+        try:
+            _dv = json.loads(_dp.stdout)
+        except Exception:
+            _dv = {"stderr": _dp.stderr[-200:]}
+    S.append(("the drawing view is offered to a world that presents a canvas, and draws it with its siblings",
+              _dv.get("pagesDrawable") is True and _dv.get("atomAloneDrawable") is False
+              and _dv.get("atomWithPagesDrawable") is True
+              and _dv.get("ownDrawable") is False and _dv.get("canvases") == 1 and _dv.get("errors") == 0))
+
+    # The current owner contract is a pinned input even on a cold checkout.
+    # The historical transport replay above materializes a different pin.
+    _current_worlds = subprocess.run([os.path.join(HERE, "bin", "playground-worlds.sh")], capture_output=True, text=True)
+    if _current_worlds.returncode:
+        print("   drawing contract input:", (_current_worlds.stdout + _current_worlds.stderr)[-1500:])
+
+    # Click the Atom's rendered keys through the page's own listener, slot
+    # locator and writer, keeping Atom.swift and AtomPages.swift separate.
+    # The applier and worlds are the pinned engine's.
+    # The fixture owns its input acquisition. A cold clone has no Drawing
+    # contract cache; a later test warming it is not this probe's dependency.
+    _press_inputs = subprocess.run(["bash", os.path.join(HERE, "bin/playground-worlds.sh")],
+                                   capture_output=True, text=True, timeout=240)
+    if _press_inputs.returncode != 0:
+        print("   drawing press inputs: " + _press_inputs.stderr[-700:])
+    _press_contract = os.path.join(_press_inputs.stdout.strip(),
+        "showcase", "Contracts", "Drawing", "v0.1", "contract.json")
+    _press_probe = os.path.join(tmp, "drawing-press.js")
+    open(_press_probe, "w", encoding="utf-8").write(r"""
+const fs = require('fs'), path = require('path'), vm = require('vm'), assert = require('assert/strict');
+const root = process.argv[2], worlds = process.argv[3];
+const ui = fs.readFileSync(path.join(root, 'web/ui.html'), 'utf8');
+const { judge } = require(path.join(root, 'bin/judge.js'));
+const { renderAll, kitVocabulary } = require(path.join(root, 'bin/renderer.js'));
+const { press } = require(path.join(root, 'bin/press.js'));
+const atom = fs.readFileSync(path.join(worlds, 'Atom.swift'), 'utf8');
+const pages = fs.readFileSync(path.join(worlds, 'AtomPages.swift'), 'utf8');
+const whole = pages + '\n' + atom;
+function grab(name) {
+    const from = ui.indexOf('function ' + name + '(');
+    assert(from >= 0, 'the shipped function exists: ' + name);
+    return ui.slice(from, ui.indexOf('\n}\n', from) + 3);
+}
+function bench(text = atom, file = 'Atom.swift', neighbors = { 'AtomPages.swift': pages }) {
+    let buffer = text, readonly = false;
+    const edits = [], located = [], events = {}, fetches = [], readings = [], scheduled = [], writes = [];
+    const changes = {}, completion = { hidden: true, dataset: {}, style: {}, querySelectorAll: () => [], querySelector: () => null };
+    const host = { style: {}, innerHTML: '', addEventListener: (name, fn) => { events[name] = fn; } };
+    const feedback = { textContent: '' };
+    const button = { hidden: true };
+    const elements = { 'canvas-host': host, 'drawing-feedback': feedback, 'view-drawing': button,
+        'editor-host': { style: {} }, bare: { style: {}, innerHTML: '' }, 'table-host': { style: {} },
+        status: {}, chips: {}, verdicts: {}, next: {} };
+    const context = vm.createContext({
+        active: file, files: [file, ...Object.keys(neighbors)], drawingInputRefusals: [], documentFiles: new Set([file, ...Object.keys(neighbors)]), theirsFiles: {}, viewingShelf: null, mode: 'drawing',
+        lastParsed: judge(file, text, kitVocabulary).parsed, kitVocabulary, press,
+        renderGeneration: 0, clearFlags() {}, buildRail() {},
+        compEl: completion, compItems: [], compFrom: null, compSlot: null, compRect: null,
+        compChosen: 0, compScaffold: null, pending: null, localNames: new Set(),
+        // Supply a grammar answer at the hidden cursor, just as the real page
+        // does at the start of Atom.swift. Keep the actual offer and change code.
+        allowedAt: () => ({ items: ['enum', 'extension', 'public', 'typealias'] }),
+        setTimeout: (fn, delay) => { const job = { fn, delay }; scheduled.push(job); return job; },
+        clearTimeout: job => { if (job) job.cancelled = true; }, tick: write => writes.push(write),
+        judge: (name, source, vocab) => { readings.push(source); return judge(name, source, vocab); },
+        renderAll, GateDrawingProfile: require(path.join(root, 'bin/drawing-profile.js')),
+        suppliedDrawingProfile: {contract:JSON.parse(fs.readFileSync(process.argv[4], 'utf8'))}, drawingDeclaration:null,
+        esc: s => String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;'),
+        editor: { get value() { return buffer; } },
+        document: { getElementById: id => elements[id], querySelectorAll: () => [] },
+        fetch: async url => {
+            const name = decodeURIComponent(url.split('=')[1]); fetches.push(name);
+            return { ok: true, text: async () => neighbors[name] };
+        },
+        cm: {
+            getOption: () => readonly, getLine: i => buffer.split('\n')[i],
+            getValue: () => buffer, refresh: () => {}, getCursor: () => ({ line: 0, ch: 0 }),
+            charCoords: () => ({ left: 0, bottom: 0 }), on: (name, fn) => { changes[name] = fn; },
+            lineCount: () => buffer.split('\n').length,
+            replaceRange: (value, from, to, origin) => {
+                assert.equal(from.line, to.line, 'a press changes one line');
+                const lines = buffer.split('\n');
+                edits.push({ value, from, to, origin });
+                lines[from.line] = lines[from.line].slice(0, from.ch) + value + lines[to.line].slice(to.ch);
+                buffer = lines.join('\n');
+                changes.change(context.cm, { origin, text: value.split('\n') });
+            }
+        },
+        // The editor's note boundary is supplied just as CodeMirror supplies
+        // lines. Existing offer probes exercise the full grammar/note walk.
+        noteStartAt: i => (buffer.split('\n')[i] || '').indexOf('//'),
+        render: () => {}, bareForm: () => '', buildTables: () => {}, syncProjection: () => {},
+    });
+    vm.runInContext(['codeOfLine', 'aliasValueRange', 'locateSlot', 'fillSlot', 'setMode',
+        'readingChanged', 'hideCompletion', 'drawCompletion', 'offerCompletion', 'acceptCompletion'].map(grab).join('\n'), context);
+    const changeStart = ui.indexOf('cm.on("change",');
+    assert(changeStart >= 0);
+    vm.runInContext('let timer = null;\n' + ui.slice(changeStart, ui.indexOf('\n});', changeStart) + 4), context);
+    const locate = context.locateSlot;
+    context.locateSlot = slot => { located.push({ ...slot }); return locate(slot); };
+    vm.runInContext(ui.slice(ui.indexOf('const CANVAS_FORMS'), ui.indexOf('// ── WHAT WAITS FOR A WORD')), context);
+    vm.runInContext('drawingProfileState = suppliedDrawingProfile;', context);
+    return { context, host, button, feedback, edits, located, fetches, readings, completion, scheduled, writes,
+        text: () => buffer,
+        change: value => { buffer = value; context.lastParsed = judge(context.active, value, kitVocabulary).parsed; },
+        readonly: value => { readonly = value; },
+        click: names => events.click({ target: { closest: selector => {
+            assert.equal(selector, 'g.vi-rule'); return { getAttribute: attr => {
+                assert.equal(attr, 'data-vi-rules'); return names;
+            } };
+        } } }),
+        key: head => {
+            const names = [...host.innerHTML.matchAll(/data-vi-rules="([^"]+)"/g)].map(m => m[1]);
+            const found = names.find(n => n.split(/[\s,]+/).includes(head));
+            assert(found, 'the rendered Atom canvas carries ' + head); return found;
+        }
+    };
+}
+async function main() {
+    const result = {};
+    const withMaterial = bench(atom, 'Atom.swift', { 'AtomPages.swift': pages, 'Evidence.swift': 'public enum Plus {}' });
+    withMaterial.context.theirsFiles = {'Evidence.swift': {kind:'CarriedFile'}};
+    withMaterial.context.documentFiles.delete('Evidence.swift');
+    await withMaterial.context.drawCanvases();
+    assert(withMaterial.host.innerHTML.includes('<svg'));
+    assert(!withMaterial.readings.some(t => t.includes('public enum Plus {}')));
+    // The pinned layout stays split. Opening the state file offers Drawing
+    // even in Bare; entering that view then exposes its neighbour's keys.
+    const b = bench(); b.context.mode = 'bare'; await b.context.drawCanvases();
+    assert.equal(b.button.hidden, false); assert.equal(b.host.innerHTML, '');
+    assert.equal(b.readings[0], atom + '\n' + pages);
+    // The view switch starts an asynchronous read; wait for its canvas, not
+    // for one turn of the loop, which a loaded machine does not promise.
+    b.context.setMode('drawing');
+    for (let turn = 0; turn < 1000 && !b.host.innerHTML.includes('<svg'); turn++)
+        await new Promise(resolve => setImmediate(resolve));
+    const sized = [...b.host.innerHTML.matchAll(/viewBox="0 0 ([\d.]+) ([\d.]+)" width="([\d.]+)" height="([\d.]+)"/g)];
+    assert(sized.length, 'a drawn world keeps its stated screen dimensions');
+    assert(sized.every(m => m[1] === m[3] && m[2] === m[4]));
+    const expected = press(atom + '\n' + pages, 'DropBeta'); assert(expected.applied);
+    const expectedBuffer = expected.text.split('\n').slice(0, atom.split('\n').length).join('\n');
+    b.click(b.key('DropBeta'));
+    assert.equal(b.text(), expectedBuffer); assert.equal(b.edits.length, 1);
+    assert.equal(b.text().split('\n').filter((line, i) => line !== atom.split('\n')[i]).length, 1);
+    assert.equal(b.text().split('\n')[expected.line - 1], 'public typealias Electron = Trapped');
+    assert.equal(b.edits[0].from.line, expected.line - 1);
+    assert.equal(b.completion.hidden, true, 'a drawn key does not offer typing at the hidden cursor');
+    b.scheduled.at(-1).fn(); assert.equal(b.writes.at(-1), true, 'the slot still schedules a write');
+    assert(b.located.length > 0 && b.located.every(s => s.kind === 'alias' && s.line === expected.line));
+    await b.context.drawCanvases(); const unchanged = b.text(); b.click(b.key('DropBeta'));
+    assert.equal(b.text(), unchanged); assert.equal(b.edits.length, 1); assert.match(b.feedback.textContent, /Electron is Trapped/);
+    b.click(b.key('RechargeFromTrap')); assert.equal(b.text(), atom); assert.equal(b.edits.length, 2);
+    assert.equal(b.context.drawingRuleNames('Put<Foo, Bar> Other'), 'Put<Foo, Bar>,Other');
+    const alone = bench(atom, 'Atom.swift', {});
+    await alone.context.drawCanvases();
+    assert.equal(alone.button.hidden, true); assert.equal(alone.host.innerHTML, '');
+    assert.equal(alone.context.mode, 'bare');
+    const plain = bench('public enum Plain {}', 'plain.swift', { 'other.swift': 'public enum Other {}' });
+    plain.context.mode = 'bare'; await plain.context.drawCanvases();
+    assert.equal(plain.button.hidden, true); assert.equal(plain.host.innerHTML, '');
+    assert(grab('render').includes('drawCanvases();'));
+    assert(!grab('render').includes('drawable(lastParsed)'));
+    result.atom = true;
+
+    const other = bench(pages, 'AtomPages.swift', { 'Atom.swift': atom });
+    await other.context.drawCanvases(); other.click(other.key('DropBeta'));
+    assert.equal(other.button.hidden, false);
+    assert.equal(other.text(), pages); assert.equal(other.edits.length, 0);
+    assert.match(other.feedback.textContent, /Open Atom\.swift/);
+    other.context.applyDrawingPress('MissingRule');
+    assert.match(other.feedback.textContent, /the applier refuses: no rule named MissingRule/);
+    other.context.applyDrawingPress('append Text x');
+    assert.match(other.feedback.textContent, /Literal typing is not available/); assert.equal(other.edits.length, 0);
+    // The preceding press retired its picture. Make a current picture before
+    // testing a click whose buffer then drifts without the editor event.
+    await b.context.drawCanvases();
+    const old = b.text(); b.change(old + '\n// typed since the drawing\n');
+    b.click(b.key('DropBeta')); assert.equal(b.text(), old + '\n// typed since the drawing\n');
+    assert.match(b.feedback.textContent, /drawing changed/);
+    other.readonly(true); other.click('DropBeta'); assert.equal(other.edits.length, 0);
+    assert.match(other.feedback.textContent, /editable file/);
+    result.refusals = true;
+
+    // Table uses the same fillSlot path and must preserve notes and braces.
+    const t = bench('public typealias Value = Foo<Bar<Baz>, Qux> // note');
+    t.context.mode = 'table'; t.context.fillSlot({ kind: 'alias', line: 1 }, 'Next<Leaf>');
+    assert.equal(t.text(), 'public typealias Value = Next<Leaf> // note');
+    t.change('public enum P { public typealias Rank = Finance }');
+    t.context.fillSlot({ kind: 'alias', line: 1 }, 'Engineering');
+    assert.equal(t.text(), 'public enum P { public typealias Rank = Engineering }');
+    for (const value of ['Foo<Bar', 'Foo<Bar>>', 'Foo<Bar>.Member', 'Foo & Bar', 'Foo<Bar> other', 'Foo<\nBar>']) {
+        t.change('public typealias Value = ' + value); const before = t.text(), count = t.edits.length;
+        t.context.fillSlot({ kind: 'alias', line: 1 }, 'Baz<Qux>');
+        assert.equal(t.text(), before, value + ' is read-only'); assert.equal(t.edits.length, count);
+    }
+    // Table accepts an offered value through hideCompletion -> fillSlot.
+    // Its real change event must not reopen the typing offer that was just shut.
+    t.change('import VerificationIsIdentification\npublic enum P { public typealias Rank = Finance }');
+    t.context.compSlot = { kind: 'alias', line: 2 };
+    t.context.compItems = ['Engineering']; t.completion.hidden = false;
+    const tableEdits = t.edits.length;
+    t.context.acceptCompletion(0);
+    assert.equal(t.text(), 'import VerificationIsIdentification\npublic enum P { public typealias Rank = Engineering }');
+    assert.equal(t.edits.length, tableEdits + 1); assert.equal(t.completion.hidden, true);
+    t.scheduled.at(-1).fn(); assert.equal(t.writes.at(-1), true);
+    // Calibrate the adapter against the old failure: keyboard +input still
+    // reaches the actual offer. Disabling all completion cannot pass this check.
+    const keyboard = bench(''); keyboard.context.mode = 'full';
+    keyboard.context.cm.replaceRange('e', { line: 0, ch: 0 }, { line: 0, ch: 0 }, '+input');
+    assert.equal(keyboard.completion.hidden, false); assert(keyboard.context.compItems.includes('typealias'));
+    result.completion = true;
+    const generic = bench('public typealias Value = Foo<Bar>\npublic enum Swap: SlotRule {\n    public typealias Slot = ValueSlot\n    public typealias From = Foo<Bar>\n    public typealias Into = Baz<Qux>\n}\n' + whole, 'generic.swift', {});
+    await generic.context.drawCanvases(); generic.context.applyDrawingPress('Swap');
+    assert(generic.text().startsWith('public typealias Value = Baz<Qux>\n'));
+    assert.equal(generic.edits.length, 1); result.slots = true;
+
+    // Two keystrokes share one fetch. The older completion cannot paint.
+    const race = bench(whole, 'a.swift', { 'neighbor.swift': '' });
+    let release; race.context.fetch = async () => {
+        race.fetches.push('neighbor.swift'); return { ok: true, text: () => new Promise(resolve => { release = resolve; }) };
+    };
+    const first = race.context.drawCanvases(); await new Promise(resolve => setImmediate(resolve));
+    race.change(whole.replace('public typealias Electron = Charged', 'public typealias Electron = Trapped'));
+    const second = race.context.drawCanvases(); release(''); await Promise.all([first, second]);
+    assert.equal(race.fetches.length, 1); assert.equal(race.readings.length, 1);
+    assert(race.readings[0].includes('public typealias Electron = Trapped'));
+    await race.context.drawCanvases(); assert.equal(race.fetches.length, 1);
+    const moves = bench(whole, 'a.swift', { 'neighbor.swift': '' }), releases = [];
+    moves.context.fetch = async () => ({ ok: true, text: () => new Promise(resolve => releases.push(resolve)) });
+    const oldRead = moves.context.drawCanvases(); await new Promise(resolve => setImmediate(resolve));
+    moves.context.resetDrawing(); moves.context.active = 'b.swift'; moves.context.files = ['b.swift', 'neighbor.swift']; moves.context.documentFiles = new Set(moves.context.files);
+    moves.change(whole.replace('public typealias Electron = Charged', 'public typealias Electron = Trapped'));
+    const newRead = moves.context.drawCanvases(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(releases.length, 2); releases[1](''); await newRead;
+    const painted = moves.host.innerHTML; releases[0](''); await oldRead;
+    assert.equal(moves.host.innerHTML, painted); assert.equal(moves.readings.length, 1);
+    assert.equal(vm.runInContext('drawingSnapshot.file', moves.context), 'b.swift');
+    // Availability follows the world even if the view changes while fetching,
+    // and an old world with a canvas cannot offer its button in a new empty one.
+    const view = bench(), availability = [];
+    view.context.fetch = async () => ({ ok: true, text: () => new Promise(resolve => availability.push(resolve)) });
+    const pending = view.context.drawCanvases(); await new Promise(resolve => setImmediate(resolve));
+    view.context.setMode('full'); availability[0](pages); await pending;
+    assert.equal(view.button.hidden, false); assert.equal(view.host.innerHTML, '');
+    const stale = bench(), deliveries = [];
+    stale.context.mode = 'bare';
+    stale.context.fetch = async () => ({ ok: true, text: () => new Promise(resolve => deliveries.push(resolve)) });
+    const previous = stale.context.drawCanvases(); await new Promise(resolve => setImmediate(resolve));
+    stale.context.resetDrawing(); stale.context.active = 'plain.swift';
+    stale.context.files = ['plain.swift', 'empty.swift']; stale.change('public enum Plain {}');
+    stale.context.documentFiles = new Set(stale.context.files);
+    const current = stale.context.drawCanvases(); await new Promise(resolve => setImmediate(resolve));
+    deliveries[1](''); await current; deliveries[0](pages); await previous;
+    assert.equal(stale.button.hidden, true); assert.equal(stale.host.innerHTML, '');
+    const broken = bench(whole, 'a.swift', { 'missing.swift': '' });
+    broken.context.fetch = async () => ({ ok: false });
+    await broken.context.drawCanvases(); assert.match(broken.host.innerHTML, /could not read missing\.swift/);
+    assert.equal(vm.runInContext('drawingSnapshot', broken.context), null);
+    assert(ui.includes('async function loadFile(name, readings = null) {\n    resetDrawing();'));
+    assert(ui.includes('<script src="/press.js"></script>'));
+    result.generations = true;
+    const counted = 'public enum Caption: Close {}\nextension Caption { public static var typeName: String { "Count" } }\npublic enum Art: GrownDiagram {\n public typealias Across = U64\n public typealias AriaLabel = Caption\n @StructureBuilder\n public static var body: some Structure & DividesY {\n Air<Half<U2>>.self\n }\n}\n';
+    const refusal = bench(counted, 'Count.swift', {});
+    await refusal.context.drawCanvases(); assert(refusal.host.innerHTML.includes('<svg'));
+    refusal.change(counted.replace('Half<U2>', 'Half<U1>'));
+    await refusal.context.drawCanvases(); assert(!refusal.host.innerHTML.includes('<svg'));
+    assert.match(refusal.feedback.textContent, /Count.swift#Art: half-odd/);
+    refusal.change(counted.replace('Half<U2>', 'Unknown<U2>'));
+    await refusal.context.drawCanvases(); assert(!refusal.host.innerHTML.includes('<svg'));
+    assert.match(refusal.feedback.textContent, /Count.swift#Art: unsupported/);
+    refusal.change(counted); await refusal.context.drawCanvases();
+    assert.match(refusal.feedback.textContent, /port-under-contract/);
+    result.drawingRefusal = true;
+    console.log(JSON.stringify(result));
+}
+main().catch(e => { console.error(e.stack); process.exitCode = 1; });
+""")
+    _press_run = (subprocess.run(["node", _press_probe, HERE, os.path.join(_dplay, "corpus", "worlds"), _press_contract],
+                                 capture_output=True, text=True)
+                  if _press_inputs.returncode == 0 else _press_inputs)
+    try:
+        _press_result = json.loads(_press_run.stdout) if _press_run.returncode == 0 else {}
+    except Exception:
+        _press_result = {}
+    if not _press_result:
+        print("   drawing press: " + (_press_run.stderr or _press_run.stdout)[-700:])
+    for _field, _said in [
+        ("atom", "the split Atom world offers Drawing in its state file, where a key writes one alias through the slot"),
+        ("refusals", "a drawn key names the other file to open and speaks an applier refusal without writing"),
+        ("slots", "Table and Drawing replace a whole generic alias value or leave it read-only"),
+        ("completion", "Drawing and Table slot writes close completion, while typing still offers and edits still schedule writes"),
+        ("generations", "only the latest drawing paints, and neighbour texts last until the file changes"),
+        ("drawingRefusal", "drawing refusals name the root, clear stale SVG and preserve not-compared"),
+    ]:
+        S.append((_said, _press_result.get(_field) is True))
 
     # ── AND A HOOK THAT WILL NOT FIND THE TOOL SAYS SO AT WIRING TIME. The hook
     # looks for ./gatew, then ./gate, then gate on PATH, and refuses the commit
@@ -3034,11 +3994,11 @@ const grab = (name, prefix) => {
     const head = (prefix || "") + "function " + name + "(";
     const at = ui.indexOf(head);
     if (at < 0) throw new Error("no " + name);
-    let d = 0;
-    for (let j = ui.indexOf("{", at); j < ui.length; j++) {
-        if (ui[j] === "{") d++;
-        else if (ui[j] === "}" && --d === 0) return ui.slice(at, j + 1);
-    }
+    // These page functions end at the left margin. Counting raw braces also
+    // counts a brace inside a regexp, which cuts aliasValueRange in half.
+    const end = ui.indexOf("\\n}\\n", at);
+    if (end < 0) throw new Error("no end for " + name);
+    return ui.slice(at, end + 2);
 };
 let SCOPES = [], NESTS = {};
 let LINE_OPENERS = {}, LINE_MODS = {}, LINE_CONTINUERS = new Set();
@@ -3048,7 +4008,7 @@ let vocabulary = {}, conformers = {}, axisOf = {}, protoAxes = {};
 let shelfDecls = new Map();
 let layoutDecls = new Map(), declFile = new Map(), worldAliases = new Map();
 let active = "w.swift", lastParsed = null, cm = null;
-let formsFiles = new Set();
+let formsFiles = new Set(), carriedFiles = new Set();
 global.fetch = async (u) => ({
     json: async () => ({ modules: pages.map(p => path.basename(p, ".swift")) }),
     text: async () => {
@@ -3061,8 +4021,11 @@ eval(["buildScopes", "admits", "scopesAt", "noteStartAt", "codeOfLine", "placeAt
       "axesOfHost", "declsInView", "declaredNow", "fillersFor", "afterDot", "allowedAt",
       // the readers that share codeOfLine with the offer, lifted so the note
       // question can be put to them and not to the offer alone
-      "describeName", "describeAxis", "locateSlot"]
+      "describeName", "describeAxis", "aliasValueRange", "locateSlot"]
      .map(n => grab(n)).join("\\n"));
+var nameLabels = new Map();
+eval(grab("collectLabels"));
+eval(grab("readWorlds", "async "));
 eval(grab("loadVocabulary", "async "));
 const world = ["public enum Legal: Realm {}",
                "public enum E9: Keeper {",
@@ -3412,7 +4375,7 @@ let SLOT_SPELLING = {};
 let vocabulary = {}, conformers = {}, axisOf = {}, protoAxes = {};
 let shelfDecls = new Map();
 let layoutDecls = new Map(), declFile = new Map(), worldAliases = new Map();
-let active = "w.swift", lastParsed = null, cm = null, formsFiles = new Set();
+let active = "w.swift", lastParsed = null, cm = null, formsFiles = new Set(), carriedFiles = new Set();
 global.fetch = async (u) => ({
     json: async () => ({ modules: pages.map(p => path.basename(p, ".swift")) }),
     text: async () => {
@@ -3424,6 +4387,9 @@ global.fetch = async (u) => ({
 eval(["buildScopes", "admits", "scopesAt", "noteStartAt", "codeOfLine", "placeAt", "ungrantedOpenerAt", "walkFormAt",
       "axesOfHost", "declsInView", "declaredNow", "fillersFor", "afterDot", "allowedAt"]
      .map(n => grab(n)).join("\\n"));
+var nameLabels = new Map();
+eval(grab("collectLabels"));
+eval(grab("readWorlds", "async "));
 eval(grab("loadVocabulary", "async "));
 // a world here carries its own forms, the way the demo's ownership.swift does,
 // and is read by the court that reads forms
@@ -3440,7 +4406,13 @@ const typeInto = (lines) => {                          // keystrokes: the buffer
     cm = { getLine: (n) => lines[n] };
     lastParsed = parse(lines);
 };
-const holds = (lines) => judge("w.swift", lines.join("\\n"), READ()).refusals.length === 0;
+const outside = (lines) => judge("w.swift", lines.join("\\n"), READ()).refusals.some(r => r.premise.startsWith("outside the fragment:"));
+// a two-line certificate is the where court's: on the page it is the contract's
+// Rust sample (bin/court-wasm), asked here through its node build, as the page's
+// shim asks it; the plain port reads no where clause
+const court = require(path.join(path.dirname(process.argv[3]), "court-wasm", "node", "vi_court.js"));
+const holdsWhere = (lines) => JSON.parse(court.judge(JSON.stringify({
+    arguments: ["where", "w.swift"], files: [{ name: "w.swift", text: lines.join("\\n") }] }))).exit === 0;
 const offerAt = (lines) => {
     const last = lines.length - 1;
     return (allowedAt({ line: last, ch: (lines[last] || "").length }).items) || [];
@@ -3462,21 +4434,21 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
     const offered = offerAt(slot);
     out.ladder = { offered, pair: {} };
     for (const name of ["ReaderKey", "WriterKey", "Wombat"])
-        out.ladder.pair[name] = { judge: holds(filled(FORMS, name)),
+        out.ladder.pair[name] = { outside: outside(filled(FORMS, name)),
                                   offer: offered.includes(name) };
-    // the certificate court of the forms reading: a two-line gate whose
+    // the certificate court over the forms reading: a two-line gate whose
     // premise only means anything after the gate's formal words are
-    // substituted with the claim's own arguments. Kill the substitution and
-    // A == B is a sentence about names that exist nowhere: the good claim
-    // refuses, the bad one with it, and the bench's first scene (carol's
-    // refusal, judged by this very path in the browser) dies quietly.
+    // substituted with the claim's own arguments. The court that does it on
+    // the page is the contract's sample, so the probe asks that court: the
+    // good claim holds, the bad one is refused, and a court that lost the
+    // substitution would hold both.
     const CERT = ["public protocol Matched {}",
                   "public enum Pair2<A, B> {}",
                   "extension Pair2: Matched",
                   "where A == B {}"];
     const certSaid = {
-        ok: holds(FORMS.concat(CERT, ["public typealias C1 = Pair2<ReaderKey, ReaderKey>"])),
-        bad: holds(FORMS.concat(CERT, ["public typealias C1 = Pair2<ReaderKey, WriterKey>"])),
+        ok: holdsWhere(FORMS.concat(CERT, ["public typealias C1 = Pair2<ReaderKey, ReaderKey>"])),
+        bad: holdsWhere(FORMS.concat(CERT, ["public typealias C1 = Pair2<ReaderKey, WriterKey>"])),
     };
 
     // the moment: a record typed, and a record erased
@@ -3488,14 +4460,14 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
     typeInto(typed);
     const seenTyped = offerAt(typed);
     out.typed = { offer: seenTyped.includes("K2"),
-                  judge: holds(FORMS.concat(["public enum K1: Reads {}",
+                  outside: outside(FORMS.concat(["public enum K1: Reads {}",
                                              "public enum K2: Reads {}"]).concat(
                       ["public enum H1: Holder {", "    public typealias Key = K2", "}"])),
                   offered: seenTyped };
     const erased = slotAfter(FORMS);                   // K1 erased by the same hand
     typeInto(erased);
     const seenErased = offerAt(erased);
-    out.erased = { offer: seenErased.includes("K1"), judge: holds(filled(FORMS, "K1")),
+    out.erased = { offer: seenErased.includes("K1"), outside: outside(filled(FORMS, "K1")),
                    offered: seenErased };
     out.cert = certSaid;
     console.log(JSON.stringify(out));
@@ -3523,23 +4495,23 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
         _pr = {}
     _lad = _pr.get("ladder") or {}
     _pairs = _lad.get("pair") or {}
-    S.append(("the offer climbs the refinement chain, because the verdict climbs it",
-              # a value of a kind that refines the wanted one is offered AND taken
-              _pairs.get("WriterKey", {}).get("judge") is True
+    S.append(("the offer climbs the inspected refinement chain without claiming a company verdict",
+              # inspection offers matching kinds; the company court refuses these foreign forms
+              _pairs.get("WriterKey", {}).get("outside") is True
               and _pairs.get("WriterKey", {}).get("offer") is True
-              and _pairs.get("ReaderKey", {}).get("judge") is True
+              and _pairs.get("ReaderKey", {}).get("outside") is True
               and _pairs.get("ReaderKey", {}).get("offer") is True
-              # and a name nobody declared is neither taken nor offered
-              and _pairs.get("Wombat", {}).get("judge") is False
+              # an undeclared name is not offered and does not make this company syntax
+              and _pairs.get("Wombat", {}).get("outside") is True
               and _pairs.get("Wombat", {}).get("offer") is False
               # walked by the judge's own function, not a second copy of it
               and "conformsTo(name, kind, decls)" in ui
-              and "module.exports = { judge, conformsTo }" in open(
+              and "module.exports = { judge, judgeFiles, conformsTo, drawingParse }" in open(
                   os.path.join(HERE, "bin", "judge.js"), encoding="utf-8").read()))
     _typed, _erased = (_pr.get("typed") or {}), (_pr.get("erased") or {})
     S.append(("the buffer answers for its own file: a record typed is offered, one erased is gone",
-              _typed.get("offer") is True and _typed.get("judge") is True
-              and _erased.get("offer") is False and _erased.get("judge") is False))
+              _typed.get("offer") is True and _typed.get("outside") is True
+              and _erased.get("offer") is False and _erased.get("outside") is True))
     # ── AND THE TWO-LINE CERTIFICATE JUDGES THROUGH ITS SUBSTITUTION. The
     # premise `A == B` names the gate's formal words; only substituting the
     # claim's arguments over them makes it a sentence about the world. The
@@ -3578,7 +4550,8 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
     # moment something broke — which is exactly the moment there is most to
     # decide.
     S.append(("and the chip reddens for disagreements alone, never for empty slots, and neither hides the other",
-              'document.getElementById("chips").innerHTML = (broken.length' in ui
+              'document.getElementById("chips").innerHTML = readingChip(r, broken)' in ui
+              and 'function readingChip(r, broken)' in ui and 'return (broken.length' in ui
               and "+ broken.length + '</span>'" in ui
               # the waiting slots are built apart from the verdict and appended to it
               and "const waits = pending.length" in ui and "+ waits;" in ui
@@ -3601,8 +4574,8 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
               '("premises", measured.map { StatusJSON.raw($0[2]) } ?? .null)'
               in open(VEIN).read()
               # and the bench prints it in the multi-file line, where it used to vanish
-              and "r.wide = r.premises" in ui
-              and '(r.wide ? " · <b>" + r.wide + "</b> claims checked" : "")' in ui))
+              and "r.wide = r.coverage ? r.coverage.readings : r.premises" in ui
+              and '(r.wide ? " · <b>" + esc(r.wide) + "</b> claims checked" : "")' in ui))
 
     S.append(("a jump can be walked back and forward, across files too",
               "function navGo(" in ui and "navFrom = navHere()" in ui
@@ -3619,8 +4592,20 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
               'viewingShelf = mod' in ui
               and 'document.getElementById("chips").innerHTML =' in ui
               and 'a printout of what the judge carries' in ui and "if (viewingShelf)" in ui))
+    _table_door_probe = subprocess.run(["node", os.path.join(HERE, "tests", "bench-door.js")],
+                           capture_output=True, text=True, timeout=60)
+    if _table_door_probe.returncode: print("   first Table door:", _table_door_probe.stdout + _table_door_probe.stderr)
+    S.append(("a Table URL projects loaded rows before delayed neighbors and verdicts", _table_door_probe.returncode == 0))
+    _words = subprocess.run(["node", os.path.join(HERE, "tests", "table-words.js")], capture_output=True, text=True)
+    if _words.returncode: print("   Table words:", _words.stdout + _words.stderr)
+    S.append(("Table keeps atoms beside their attributed literal words", _words.returncode == 0))
+    _ready = subprocess.run([sys.executable, os.path.join(HERE, "tests", "serve-ready.py"), CLI_HERE, d], capture_output=True, text=True, timeout=60)
+    if _ready.returncode: print("   serve readiness:", _ready.stdout + _ready.stderr)
+    S.append(("serve announces a reachable address and keeps an occupied port unready", _ready.returncode == 0))
+    _read_transition = subprocess.run(["node", os.path.join(HERE, "tests", "carried-readings.js")],
+                                      capture_output=True, text=True, timeout=60)
     S.append(("and returning to a world file resumes judgement",
-              'viewingShelf = null' in ui and 'cm.setOption("readOnly", false); viewingShelf = null' in ui))
+              _read_transition.returncode == 0))
 
     S.append(("the offer has one source: the grammar, with no pool to fall back to",
               "if (!here) return hideCompletion()" in ui and "function completionPool" not in ui))
@@ -4073,7 +5058,9 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
     # every raised thing wore a halo. A shadow belongs to no theme.
     dark_block = style.split(':root[data-theme="dark"]{', 1)[1].split("}", 1)[0]
     S.append(("an offer opens on the value it is asking about, closes when looked away from, and casts a shadow that is dark in both themes",
-              "offerIndex(items, td.textContent)" in ui
+              # Words beside the atom belong to its caption; selection uses
+              # the stated term. table-words.js exercises this actual click.
+              "offerIndex(items, shownTerm(raw))" in ui
               and "offerIndex(items, sl.textContent)" in ui
               # cast toward nothing, and the dark theme may not redefine it
               and "--shade:" in style and "--shade" not in dark_block
@@ -4562,6 +5549,109 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
               and [r["address"] for r in with_stray.get("refusals", [])
                    if "no row in the manifest" in r["claim"]] == ["stray.swift"]))
 
+    # ── WORLD TEXT NEVER BECOMES A PROGRAM. The builders below are the real
+    # UI functions; Python's HTML parser reads their fragments independently.
+    # Reverting rowFor must both create the img and trip the isolated probe.
+    _security = os.path.join(HERE, "tests", "bench-security.js")
+    _safe = subprocess.run(["node", _security], capture_output=True, text=True)
+    S.append(("hostile court text, filenames, notes and typeName stay text in the bench and SVG",
+              _safe.returncode == 0 and "BENCH SECURITY GREEN" in _safe.stdout))
+    if _safe.returncode: print("   " + (_safe.stdout + _safe.stderr)[-1000:])
+    _old = subprocess.run(["node", _security, "--old-row-for"], capture_output=True, text=True)
+    S.append(("the original rowFor is caught by the hostile fragment probe",
+              _old.returncode != 0 and "the event probe stays unset" in _old.stderr))
+
+    import importlib.util as _security_import
+    _csp_spec = _security_import.spec_from_file_location("bench_csp", os.path.join(HERE, "bin", "bench_csp.py"))
+    _csp_module = _security_import.module_from_spec(_csp_spec)
+    _csp_spec.loader.exec_module(_csp_module)
+    _page = open(os.path.join(HERE, "web", "ui.html"), encoding="utf-8").read()
+    _pending = subprocess.run(["node", os.path.join(HERE, "tests", "bench-edit-pending.js")],
+                              capture_output=True, text=True)
+    S.append(("an edit retires old drawing and court receipts before the next reading",
+              _pending.returncode == 0))
+    if _pending.returncode:
+        print(_pending.stdout + _pending.stderr, flush=True)
+    _writes = subprocess.run([sys.executable, os.path.join(HERE, "tests", "write-refusal.py")],
+                             capture_output=True, text=True)
+    S.append(("unsupported static writes and failed native writes refuse at their address, including in the UI",
+              _writes.returncode == 0))
+    if _writes.returncode:
+        print(_writes.stdout + _writes.stderr, flush=True)
+    _drafts = subprocess.run([sys.executable, os.path.join(HERE, "tests", "reader-draft.py")],
+                             capture_output=True, text=True)
+    S.append(("ordinary and contextual snapshots keep the same reader drafts, including refusals and splices",
+              _drafts.returncode == 0))
+    if _drafts.returncode:
+        print(_drafts.stdout + _drafts.stderr, flush=True)
+    _storage = subprocess.run(["node", os.path.join(HERE, "tests", "draft-storage.js")],
+                              capture_output=True, text=True)
+    S.append(("reader drafts bind their namespace and base, recover scoped records and never replay stored verdicts",
+              _storage.returncode == 0))
+    if _storage.returncode:
+        print(_storage.stdout + _storage.stderr, flush=True)
+    _script_policy = re.search(r"script-src ([^;]+)", _page).group(1)
+    S.append(("the bench authorizes only its exact inline programs and blocks inline handlers",
+              "'unsafe-inline'" not in _script_policy
+              and "'unsafe-hashes'" not in _script_policy
+              and "script-src-attr 'none'" in _page
+              and _csp_module.stamp_csp(_page) == _page))
+    _closing_script = '</script><script>document.body.dataset.probe=1</script>'
+    _encoded = _csp_module.script_json({"world": _closing_script, "name": '<img src=x onerror="probe=1">'})
+    _data_page = _page.replace('<script>', '<script>const hostileSnapshot = ' + _encoded + ';', 1)
+    S.append(("published snapshot strings cannot close a trusted script before CSP is stamped",
+              "<" not in _encoded and json.loads(_encoded)["world"] == _closing_script
+              and len(re.findall(r"<script>", _data_page)) == len(re.findall(r"<script>", _page))
+              and "script-src-attr 'none'" in _csp_module.stamp_csp(_data_page)))
+
+    # The actual server and the native plain court must expose the same hostile
+    # line to the renderer; a sanitized fixture response would hide the bug.
+    _hostile = tempfile.mkdtemp(prefix="hostile-bench-", dir=tmp)
+    _hostile_name = "hostile.swift"
+    _hostile_extra = 'extra-<img src=x onerror="document.body.dataset.probe=1">.swift'
+    open(os.path.join(_hostile, _hostile_extra), "w").write("// an undeclared hostile name\n")
+    _hostile_text = '<img src=x onerror="document.body.dataset.probe=1">\npublic enum Stranger {}\n'
+    open(os.path.join(_hostile, _hostile_name), "w").write(_hostile_text)
+    open(os.path.join(_hostile, "other.swift"), "w").write("public enum Other {}\n")
+    run("mine", _hostile_name, "--role", "world", cwd=_hostile)
+    run("mine", "other.swift", "--role", "world", cwd=_hostile)
+    import urllib.request as _security_http, urllib.parse as _security_url
+    _hp = free_port()
+    _hs = subprocess.Popen([GATE, "serve", str(_hp), "--no-open"], cwd=_hostile,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        wait_serve(_hp)
+        _request = _security_http.Request("http://127.0.0.1:" + str(_hp) + "/verdict?f="
+            + _security_url.quote(_hostile_name), data=_hostile_text.encode(), method="POST")
+        _file_answer = _security_http.urlopen("http://127.0.0.1:" + str(_hp) + "/files", timeout=60).read()
+        _file_answer_path = os.path.join(tmp, "hostile-server-files.json")
+        open(_file_answer_path, "wb").write(_file_answer)
+        _answer = _security_http.urlopen(_request, timeout=60).read()
+        _answer_path = os.path.join(tmp, "hostile-server-answer.json")
+        open(_answer_path, "wb").write(_answer)
+        _served = subprocess.run(["node", _security, "--server-verdict", _answer_path, "--file-list", _file_answer_path],
+                                 capture_output=True, text=True)
+        S.append(("a real loopback verdict quoting a hostile world remains literal in the bench",
+                  _served.returncode == 0 and "BENCH SECURITY GREEN" in _served.stdout))
+        if _served.returncode:
+            print("   verdict: " + _answer.decode()[:1800])
+            print("   " + (_served.stdout + _served.stderr)[-1000:])
+    finally:
+        _hs.terminate(); _hs.wait(timeout=10)
+
+    _builder_src = open(os.path.join(HERE, "bin", "build-pages.py"), encoding="utf-8").read()
+    S.append(("the static builder stamps CSP after escaping snapshot data and resets without an inline handler",
+              "script_json(snap)" in _builder_src and "ui = stamp_csp(ui.replace(marker, note + marker, 1))" in _builder_src
+              and 'id="reset-copy"' in _builder_src and 'closest("#reset-copy")' in _builder_src
+              and 'onclick="__resetCopy' not in _builder_src))
+
+    _static_readings = subprocess.run([sys.executable, os.path.join(HERE, "tests", "static-readings.py")],
+                                      capture_output=True, text=True)
+    S.append(("a published host declares the reading protocol its UI can actually open",
+              _static_readings.returncode == 0 and "STATIC READINGS GREEN" in _static_readings.stdout))
+    if _static_readings.returncode:
+        print("   " + (_static_readings.stdout + _static_readings.stderr)[-2000:])
+
     # ── AND THE PAGE HAS TO PARSE. Every check here reads the bench as text and
     # asks whether the right words are in it — which says nothing about whether
     # the browser can run a line of it. A name collision in one function made the
@@ -5032,9 +6122,9 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
               # it is not swept into the plain world: that count is the world's alone
               and frm_status.get("world", {}).get("declarations") == 1
               # and it is not accused of being a stray, because it was declared
-              and frm_status.get("verdict") == "holds"
+              and palette_holds(frm_status)
               # a word invented in the fork is learned: the truth about it holds
-              and learned.get("verdict") == "holds"
+              and palette_holds(learned)
               # and a lie about that same invented word is refused, at the file
               and lied.get("verdict") == "refused"
               and any("ArchitectIsTwoLines" in r.get("claim", "")
@@ -5046,17 +6136,59 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
     # every refusal accuses the wrong side, in the same green battery. The raw
     # sentence is fetched from the court itself, so the translation is held to
     # whatever the court said, not to a remembered spelling of it.
+    # The bench pages ask the count court now, so the pair is held on a page of
+    # certificates: the courts page, taken as forms and lied about.
+    _ord = tempfile.mkdtemp(dir=tmp)
+    open(os.path.join(_ord, "gate.swift"), "w").write("public enum Sales: Department {}\n")
+    open(os.path.join(_ord, "vendor-courts.swift"), "w").write(
+        open(os.path.join(HERE, "stdlib", "courts.swift"), encoding="utf-8").read()
+        .replace("public typealias Binary_carries_where = Carry<BinaryJudge, WhereVerdicts, CanonV4>",
+                 "public typealias Binary_carries_where = Carry<BinaryJudge, WhereVerdicts, CanonV2>", 1))
+    run("theirs", "vendor-courts.swift", "--at", "acme/courts@9d1e", "--role", "forms", cwd=_ord)
+    _ord_said = run("status", cwd=_ord)[1]
     _raw_where = subprocess.run(
         [os.path.join(HERE, "bin", "gate-judge"), "judge", "where",
-         os.path.join(frm, "vendor-forms.swift")],
+         os.path.join(_ord, "vendor-courts.swift")],
         capture_output=True, text=True).stdout
-    _raw_pair = re.search(r"'ArchitectIsTwoLines[^']*'[^(]*\(aka '([^']+)'\)"
+    _raw_pair = re.search(r"'Binary_carries_where[^']*'[^(]*\(aka '([^']+)'\)"
                           r"[^(]*\(aka '([^']+)'\)", _raw_where)
-    _said_pair = next((r.get("claim", "") for r in lied.get("refusals", [])
-                       if "ArchitectIsTwoLines" in r.get("claim", "")), "")
+    _said_pair = next((r.get("claim", "") for r in _ord_said.get("refusals", [])
+                       if "Binary_carries_where" in r.get("claim", "")), "")
     S.append(("the where verdict a reader sees keeps the pair in the court's own order",
               bool(_raw_pair)
               and (_raw_pair.group(1) + " against " + _raw_pair.group(2)) in _said_pair))
+
+    # Equal resolved atoms do not make Review.Input and Run.Input one question.
+    _two = tempfile.mkdtemp(dir=tmp)
+    open(os.path.join(_two, "gate.swift"), "w").write("public enum Sales: Department {}\n")
+    open(os.path.join(_two, "evidence.swift"), "w").write("""
+public protocol Atom {}
+public enum Old: Atom {}
+public enum New: Atom {}
+public protocol Evidence { associatedtype Input: Atom }
+public protocol Application {
+    associatedtype Input: Atom
+    associatedtype Review: Evidence
+    associatedtype Run: Evidence
+}
+public protocol Admitted: Application where Input == Review.Input, Input == Run.Input {}
+public enum Reviewed: Evidence { public typealias Input = Old }
+public enum Executed: Evidence { public typealias Input = Old }
+public enum Use: Admitted {
+    public typealias Input = New
+    public typealias Review = Reviewed
+    public typealias Run = Executed
+}
+""")
+    run("theirs", "evidence.swift", "--at", "acme/evidence@9d1e", "--role", "forms", cwd=_two)
+    _two_said = run("status", cwd=_two)[1]
+    _two_bad = [r for r in _two_said.get("refusals", []) if "Use ·" in r.get("claim", "")]
+    S.append(("equal resolved pairs retain the two distinct symbolic requirements",
+              len(_two_bad) == 2 and len({r["claim"] for r in _two_bad}) == 2
+              and len({r["address"] for r in _two_bad}) == 1
+              and all("New against Old" in r["claim"] for r in _two_bad)
+              and any("Input == Review.Input" in r["claim"] for r in _two_bad)
+              and any("Input == Run.Input" in r["claim"] for r in _two_bad)))
 
     # ── AND THE FORMS ROWS ARE JUDGED AS ONE STREAM, WHICH IS NOT A DETAIL.
     # `where` over a LIST of files is blind, and its silence is selective by
@@ -5089,7 +6221,7 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
                       # addressed where it is written, not where it was read
                       and (r.get("address") or "").startswith("forms-b.swift:")
                       for r in caught.get("refusals", []))
-              and mended.get("verdict") == "holds"
+              and palette_holds(mended)
               # one stream, and one place that says which: a forms file is its
               # own stream, so a law split across two of them is read together
               and "func oneStream(" in shelf_src
@@ -5128,9 +6260,9 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
               # the honest one, and it is about provenance rather than a verdict
               # and it holds: the revision it carried unrecorded is written down,
               # so the tool is not asking of anybody a thing it had not done
-              and own_status.get("verdict") == "holds"
+              and palette_holds(own_status)
               and open(os.path.join(HERE, "bin", "gate-judge.from"),
-                       encoding="utf-8").read().strip().startswith("d74e258")
+                       encoding="utf-8").read().strip() == json.load(open(os.path.join(HERE, "bin", "court-contract.from")))["revision"]
               # AND THE EDITOR IS ACCOUNTED FOR TOO. It arrived the way anything
               # of somebody else's should — named, versioned, unchanged, saying
               # so in its own first line — and it was the one dependency an
@@ -5247,8 +6379,8 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
     pal = open(os.path.join(HERE, "stdlib", "bench-palette.swift"), encoding="utf-8").read()
     S.append(("two channels a reader must separate are held apart by a stated floor",
               # the form exists and says what it means
-              "public enum Apart<A, B, Margin>: Close {}" in pal
-              and "where A == Plus<B, Plus<Unit, Margin>> {}" in pal
+              "public typealias Apart<A: Structure, B: Structure, Margin: Structure> = "
+              "Luminance<A, Plus<B, Plus<Unit, Margin>>>" in pal
               # both questions a name's hue answers are floored, in both halves
               and all(f"public typealias {n} = Apart<" in pal for n in (
                   "MineApartTheirs_X_lit", "MineApartTheirs_X_dim",
@@ -5262,10 +6394,11 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
                   "BadApartLaw_Z_dim"))
               # and the weak one is named as weak rather than buried in a number
               and "The weak one, said out loud" in pal
-              # the floors are live: the judge counts them among what it holds
-              and "119 equalities" in subprocess.run(
-                  [os.path.join(HERE, "bin", "gate-judge"), "judge", "where",
-                   os.path.join(HERE, "stdlib", "bench-palette.swift")],
+              # the floors are live: the count court counts them among what it holds
+              and "COUNT holds: 119 source-bound readings" in subprocess.run(
+                  [os.path.join(HERE, "bin", "gate-judge"), "judge", "count",
+                   os.path.join(HERE, "stdlib", "bench-palette.swift"), _premise,
+                   *(count_question(pal) or [])],
                   capture_output=True, text=True).stdout))
 
     # ── THE JUDGE'S TABLES ARE A RESTATEMENT OF A FILE WE ALREADY SHIP. Our port
@@ -5310,71 +6443,29 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
               and re.findall(r"associatedtype (\w+)\s*:\s*(\w+)",
                              protos.get("Document", "")) == [("Home", "Department")]))
 
-    # ── AND PRESENTING THE FORMS CHANGES NOTHING, WHICH IS THE WHOLE PROOF. The
-    # port now derives what a protocol requires from the protocol itself, so a
-    # world that presents its forms is judged by what it presented rather than by
-    # a table this port was born knowing. If that derivation were poorer than the
-    # table, a world would go quiet somewhere — so the check runs the reference
-    # world both ways, whole and broken four ways, and demands the refusals match
-    # word for word. Green parity without red parity is half a parity.
-    #
-    # It also caught a parser fault nobody had met: `public enum FinanceShare:
-    # Document { public typealias Home = Finance }` closes on its own line, and
-    # the test for that asked whether the line ended in an empty `{}`. It does
-    # not, so the share went on the stack and never came off — every record after
-    # it nested inside, `FinanceShare.EngineeringShare.SalesShare.PeopleShare
-    # .Edsger`, and fifty-eight names resolved to nothing. Braces balance on a
-    # line or they do not.
+    # Foreign protocol declarations do not override the company table. Ask
+    # both carriers on the company alone and with those forms prefixed, for
+    # the original world and four lies. The prefixed forms must be refused.
     par = tempfile.mkdtemp(dir=tmp)
     run("demo", "org", cwd=par)
     par_world = os.path.join(par, "gate-demo", "gate.swift")
-    probe = os.path.join(par, "parity.mjs")
-    open(probe, "w").write(
-        "import fs from 'fs';\n"
-        "const src = fs.readFileSync(process.argv[2], 'utf8');\n"
-        "const mod = { exports: {} };\n"
-        "new Function('module','exports',src)(mod, mod.exports);\n"
-        "const { judge } = mod.exports;\n"
-        "const world = fs.readFileSync(process.argv[3], 'utf8');\n"
-        "const forms = fs.readFileSync(process.argv[4], 'utf8');\n"
-        "const V = { seeds: new Set(), generics: new Set() };\n"
-        "const cases = [world,\n"
-        "  world.replace('public typealias Rank = Manager','public typealias Rank = Archduke'),\n"
-        "  world.replace('public typealias Home = Finance','public typealias Home = Atlantis'),\n"
-        "  world.replace('    public typealias Site = OnSite\\n',''),\n"
-        "  world.replace('public typealias Next = Barbara','public typealias Next = Nobody')];\n"
-        "const out = cases.map((w) => {\n"
-        "  const a = judge('w.swift', w, V), b = judge('w.swift', forms + '\\n' + w, V);\n"
-        "  const A = a.refusals.map(r => r.premise).sort();\n"
-        "  const B = b.refusals.map(r => r.premise).sort();\n"
-        "  return [A.length, JSON.stringify(A) === JSON.stringify(B)];\n"
-        "});\n"
-        "console.log(JSON.stringify(out));\n")
-    par_out = subprocess.run(
-        ["node", probe, os.path.join(HERE, "bin", "judge.js"), par_world,
-         os.path.join(HERE, "stdlib", "forms-organization.swift")],
-        capture_output=True, text=True).stdout.strip().splitlines()
-    try:
-        par_res = json.loads(par_out[-1]) if par_out else []
-    except Exception:
-        par_res = []
-    # FOUR MATCH AND ONE CORRECTS, which is better than five matching. Removing
-    # an axis shows the baked table naming `Person` where the file names
-    # `Employee` — the constant had drifted from the declaration it was copied
-    # from and put `Site` under the wrong protocol. A second truth either drifts
-    # or coarsens; this one drifted, and the probe caught it rather than an
-    # argument. The presented file is the one that is right.
-    S.append(("a world judged by the forms it presents refuses what it did, or better",
-              len(par_res) == 5
-              and sum(1 for _, same in par_res if same) == 4
-              # the whole world holds and every broken one refuses, so this is
-              # not five greens agreeing that nothing was ever checked
-              and par_res[0][0] == 0 and all(n > 0 for n, _ in par_res[1:])
-              # the domain comes from what was presented, not from what was baked
-              and "function domainOf(declarations)" in js
-              and "domain.requires.get(conformance)" in js
-              # and a head that closes on its own line closes on its own line
-              and "const selfClosed = opens > 0 && opens === closes;" in js))
+    world_text = open(par_world, encoding="utf-8").read()
+    forms_text = open(os.path.join(STDLIB, "forms-organization.swift"), encoding="utf-8").read()
+    domain_cases = [world_text,
+        world_text.replace("public typealias Rank = Manager", "public typealias Rank = Archduke"),
+        world_text.replace("public typealias Home = Finance", "public typealias Home = Atlantis"),
+        world_text.replace("    public typealias Site = OnSite\n", ""),
+        world_text.replace("public typealias Next = Barbara", "public typealias Next = Nobody")]
+    domain_answers = []
+    for source in domain_cases:
+        for prefix in ("", forms_text + "\n"):
+            open(par_world, "w", encoding="utf-8").write(prefix + source)
+            hb, hp, hbc, hpc = both_ways(par_world)
+            domain_answers.append((hb == hp and hbc == hpc, hbc))
+    S.append(("foreign forms do not replace the company's table in either carrier",
+              all(same for same, code in domain_answers)
+              and domain_answers[0][1] == 0
+              and all(code == 1 for same, code in domain_answers[1:])))
 
     # ── THE BENCH READS THE FORMS THIS WORLD PRESENTS. What a record may be is
     # written in the operator's own file now, and the bench had been offering
@@ -5410,7 +6501,7 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
               and "!formsHere.contains(name)" in shelf_src
               # its words reach what the bench offers
               and "for (const f of formsFiles)" in ui
-              and 'sources.push([f, await (await fetch("/world?f="' in ui))
+              and 'sources.push([f, rows.get(f)?.text || ""])' in ui))
 
     # ── THE LAST MILE, AND WHERE IT STOPS. Every answer ends with a step and the
     # step names a command in backticks — which is a sentence to read, and a
@@ -5448,17 +6539,18 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
     # them. WORLDS are everything else, and a world's name inside a mechanism is
     # a leak, not a feature.
     #
-    # Swept by machine rather than by eye, the port's own literals fall in
-    # exactly two piles: five that are the language, and twenty-five that are one
-    # reference world — its ranks, its departments, its shares, its gates. The
-    # same sweep on the corpus reads WhereJudge with five language names and no
-    # world at all, and the plain Judge with thirty-six names and every one of
-    # them that world's. So the where court is already the clean mechanism, and
-    # the leak is the plain one — which is exactly what its behaviour says: it
-    # refuses a presented protocol and carries a table.
+    # Swept by machine rather than by eye, the port's own literals once fell in
+    # two piles: five that were the language of counting, and twenty-five that
+    # are one reference world — its ranks, its departments, its shares, its
+    # gates. The counting left with the where pass: where and count are the
+    # contract's sample's (bin/court-wasm), and the plain port adds nothing, so
+    # no counting form may appear in it now. The leak is the plain court's, which
+    # is exactly what its behaviour says: it refuses a presented protocol and
+    # carries a table.
     #
-    # This holds the pile still. A new world name in our port goes red here, and
-    # when the leak is swept the number drops rather than a comment going stale.
+    # This holds the pile still. A counting form or a new world name in our port
+    # goes red here, and when the leak is swept the number drops rather than a
+    # comment going stale.
     port = open(os.path.join(HERE, "bin", "judge.js"), encoding="utf-8").read()
     LANGUAGE = {"Unit", "Plus", "Twice", "Times", "Never"}
     LEAKED = {"IndividualContributor", "Lead", "Manager", "Finance", "Engineering",
@@ -5469,9 +6561,9 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
               "VerifiedAtRank", "VerifiedAtWorkplace"}
     AXES = {"Rank", "Home", "Site", "Given", "Family", "Sex", "Born", "Next"}
     found = set(re.findall(r'"([A-Z][A-Za-z]+)"', port))
-    S.append(("the mechanism holds the language and one named leak, and nothing else",
-              # the language belongs and is all there
-              LANGUAGE <= found
+    S.append(("the mechanism holds no counting form and one named leak, and nothing else",
+              # the counting forms belong to the sample, none of them here
+              not (LANGUAGE & found)
               # every world name in it is one of the ones already counted: a new
               # one means a world walked into the mechanism while nobody looked
               and not (found - LANGUAGE - LEAKED - AXES)
@@ -5489,7 +6581,7 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
     # That file holds laws rather than a list: the size ladder only goes up, so
     # `caption` cannot quietly become the size of `speech`, and every leading is
     # at least as tall as the letters it sets, because a line that overlaps the
-    # next is not a line. Twenty-two equalities, probed by breaking one.
+    # next is not a line. Twenty-two count readings, probed by breaking one.
     reg = open(os.path.join(HERE, "stdlib", "bench-registers.swift"), encoding="utf-8").read()
     served = bench_says("/ladder.css")
     style_only = ui.split("<style>", 1)[1].split("</style>", 1)[0]
@@ -5503,11 +6595,12 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
               and "--mono: ui-monospace,Menlo,monospace;" in served
               and "func registerTokens(" in shelf_src
               # and that world holds a ladder and a floor, not just a list
-              and "public enum Taller<Hi, Lo, Slack>: Close {}" in reg
-              and "public enum AtLeast<Have, Floor, Slack>: Close {}" in reg
-              and "22 equalities" in subprocess.run(
-                  [os.path.join(HERE, "bin", "gate-judge"), "judge", "where",
-                   os.path.join(HERE, "stdlib", "bench-registers.swift")],
+              and "public typealias Taller<Hi: Structure, Lo: Structure, Slack: Structure> = " in reg
+              and "public typealias AtLeast<Have: Structure, Floor: Structure, Slack: Structure> = " in reg
+              and "COUNT holds: 22 source-bound readings" in subprocess.run(
+                  [os.path.join(HERE, "bin", "gate-judge"), "judge", "count",
+                   os.path.join(HERE, "stdlib", "bench-registers.swift"), _premise,
+                   *(count_question(reg) or [])],
                   capture_output=True, text=True).stdout))
 
     # ── THE FLOOR IS REACHABLE, AND THIS IS THE SCENARIO. Open a forms file,
@@ -5525,11 +6618,11 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
     lang = json.loads(bench_says("/language"))
     S.append(("a word of the language says where it is declared, and opens if it is here",
               # the floor is named, with the line each word stands on
-              lang.get("names", {}).get("Twice") == 299
-              and lang.get("names", {}).get("Unit") == 283
+              lang.get("names", {}).get("Twice") == 308
+              and lang.get("names", {}).get("Unit") == 292
               and lang.get("file", "").endswith("Primitive.swift")
               # at the revision the judge was built from, not some other one
-              and (lang.get("at") or "").startswith("d74e258")
+              and lang.get("at") == open(os.path.join(HERE, "bin", "gate-judge.from")).read().strip()
               # and the way to get it, since this tool will not go and take it
               and "git clone" in lang.get("command", "")
               # the bench reaches them: they join what a click can land on
@@ -5610,7 +6703,7 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
                       for r in said_my.get("refusals", []))
               # by running the same guards, not by a second opinion of its own
               and "A court that answers about a world may" in shelf_src
-              and shelf_src.count("refusals += duplicateGuardsOver(sources)") >= 1))
+              and shelf_src.count("refusals += duplicateGuardsOver(") >= 1))
 
     # ── A SLOT IS A SLOT WHEREVER IT IS WRITTEN. `associatedtype Next: Cycle`
     # opens a hole and `Enter<Who: Keeper, Into: Room>` opens two — the same
@@ -5986,14 +7079,14 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
     open(dman, "w").write(kept_two)
     S.append(("a file is declared once, and a second row about it is refused at its line",
               twice.get("asks") and "already declared" in twice.get("note", "")
-              and run("status", cwd=dd)[1].get("verdict") == "holds"
+              and run("status", cwd=dd)[1].get("verdict") == "empty"
               and doubled.get("verdict") == "refused"
               and any("second row about api.swift" in r.get("claim", "")
                       for r in doubled.get("refusals", []))))
 
     # ── HOW BIG THE COURT IS, COUNTED RATHER THAN CLAIMED. Somebody who opens
     # the corpus meets nine hundred files and concludes "a large machine I will
-    # never read". The court is two of them. That is the strongest thing this
+    # never read". The court is one folder of them. That is the strongest thing this
     # tool can say about its own judge and it was said nowhere — while the
     # number, written down here, would be a claim about somebody else's files
     # that nothing checks. It is counted from the checkout when there is one and
@@ -6011,8 +7104,9 @@ const filled = (body, name) => body.concat(["public enum H1: Holder {",
     # none it says nothing about somebody else's files rather than guessing.
     S.append(("the court's size is counted from the checkout, and unsaid without one",
               "the court is" not in silent_court
-              # the two files that decide every verdict are named, not guessed at
-              and 'let COURT_FILES = ["Sources/Tools/Judge.swift", "Sources/Tools/WhereJudge.swift"]' in shelf_src
+              # the folder that decides every verdict is named, and its files are
+              # listed from the checkout, not guessed at here
+              and 'let COURT_DIR = "Sources/Court"' in shelf_src
               # no number about somebody else's files is written in this tool
               and not re.search(r"court[^\n]*\b1021\b", shelf_src)
               and (not corpus or re.search(r"the court is \d+ lines", counted))
@@ -6491,13 +7585,13 @@ console.log(JSON.stringify({
     kept = open(jm, encoding="utf-8").read()
     try:
         open(jm, "w", encoding="utf-8").write(
-            kept.replace("verification-is-identification@d74e258",
+            kept.replace("verification-is-identification@" + open(os.path.join(HERE, "bin", "gate-judge.from")).read().strip()[:8],
                          "verification-is-identification@deadbee"))
         lied = run("status", cwd=HERE)[1]
     finally:
         open(jm, "w", encoding="utf-8").write(kept)
     S.append(("a row that names the court may not disagree with the court",
-              run("status", cwd=HERE)[1].get("verdict") == "holds"
+              palette_holds(run("status", cwd=HERE)[1])
               and lied.get("verdict") == "refused"
               and any("may not disagree with the court" in r.get("claim", "")
                       for r in lied.get("refusals", []))
@@ -6875,10 +7969,12 @@ console.log(JSON.stringify(out));
     # and the law itself rewritten to permit it: refused as a law that is not theirs
     rewrite = _say("public typealias BadChroma_dim = TowardBlue<BadDimY, BadDimZ, Plus<W2, W4>>\n")
     S.append(("say any number, say what holds of it, and the form of a law is not yours",
-              lawful.get("verdict") == "holds"
+              palette_holds(lawful)
               and green.get("verdict") == "refused"
-              and any("BadChroma_dim" in r.get("claim", "") or "Apart<BadDimZ" in r.get("claim", "")
-                      for r in green.get("refusals", []))
+              # the hue law itself now refuses the changed side, with the
+              # reading kept under its original claim's name
+              and any(n in r.get("claim", "") for r in green.get("refusals", [])
+                      for n in ("BadChroma_dim.R1",))
               and all((r.get("address") or "").startswith("my-colours.swift")
                       for r in green.get("refusals", []))
               and rewrite.get("verdict") == "refused"
@@ -6918,10 +8014,10 @@ console.log(JSON.stringify(out));
         "}\n"
         "\npublic enum Sales: Department {}\n")
     judge_bin = os.path.join(HERE, "bin", "gate-judge")
-    plain = subprocess.run([judge_bin, "judge", os.path.join(claim_probe, "world.swift")],
+    plain = subprocess.run([os.path.join(HERE, "bin", "organization-judge"), "judge", os.path.join(claim_probe, "world.swift")],
                            capture_output=True, text=True).stdout
     where = subprocess.run([judge_bin, "judge", "where", os.path.join(claim_probe, "world.swift")],
-                           capture_output=True, text=True).stdout
+                           capture_output=True, text=True)
     S.append(("a claim written where it is used is judged by neither court today",
               # the plain court refuses it on FORM: a protocol is outside the
               # fragment, and so is the extension that spells a typeName
@@ -6929,8 +8025,11 @@ console.log(JSON.stringify(out));
               and "public protocol Role {}" in plain
               and "typeName" in plain
               # and the where court takes the same text and judges nothing at
-              # all — a green over nought uses, which says neither yes nor no
-              and "THE WHERE holds" in where and "across 0 uses" in where))
+              # all, and at canon four it says so rather than print a green over
+              # nought uses: neither yes nor no
+              and where.returncode == 2
+              and where.stderr.strip() == "✗ THE WHERE: no equalities or memberships were "
+                                          "judged; no certificate established"))
 
     # ── AND THE DIAMOND HOLDS ON CLAIMS, which is the half that already works.
     # Two files claiming the same revision atom are two truths about one name,
@@ -7082,11 +8181,14 @@ console.log(JSON.stringify(out));
     # the certificate court `["where"] + paths` is the blindness this guards
     one_path = all("," not in c and "+" not in c and "..." not in c for c in where_calls) \
         and 'courtSays(["where"] +' not in gate_src
-    pal_text = open(os.path.join(HERE, "stdlib", "bench-palette.swift"), encoding="utf-8").read()
-    cut = pal_text.index("// ── the light theme")
-    machinery, values = pal_text[:cut], pal_text[cut:]
-    broken = re.sub(r"public typealias InkLitY = .+",
-                    "public typealias InkLitY = Plus<W256, Plus<W512, W128>>", values, count=1)
+    # the courts page is the shelf's page of certificates: its machinery, and the
+    # carriers' claims after it, split in two with a real break planted
+    crt_text = open(os.path.join(HERE, "stdlib", "courts.swift"), encoding="utf-8").read()
+    cut = re.search(r"^public typealias \w+_carries_\w+ = ", crt_text, re.M).start()
+    machinery, values = crt_text[:cut], crt_text[cut:]
+    broken = values.replace(
+        "public typealias Binary_carries_where = Carry<BinaryJudge, WhereVerdicts, CanonV4>",
+        "public typealias Binary_carries_where = Carry<BinaryJudge, WhereVerdicts, CanonV2>", 1)
     d = os.path.join(tmp, "stream")
     os.makedirs(d, exist_ok=True)
     open(os.path.join(d, "machinery.swift"), "w").write(machinery)
@@ -7307,17 +8409,24 @@ console.log(JSON.stringify({
     slot_js = '''
 const { judge } = require(%r);
 const forms = %s;
-const world = (v) => forms + `
+const world = (v) => `
 public enum P1: Person {
     public typealias Given = G1
     public typealias Family = F1
     public typealias Born = B1
     public typealias Sex = ${v}
+    public typealias Site = OnSite
 }
-public enum G1: GivenNameCycle { public typealias Next = G1
-    public typealias Sex = Male }
-public enum F1: FamilyNameCycle { public typealias Next = F1 }
-public enum B1: BirthYearCycle { public typealias Next = B1 }
+public enum G1: GivenNameCycle {
+    public typealias Next = G1
+    public typealias Sex = Male
+}
+public enum F1: FamilyNameCycle {
+    public typealias Next = F1
+}
+public enum B1: BirthYearCycle {
+    public typealias Next = B1
+}
 `;
 const landsIn = (v) => (judge("w.swift", world(v)).refusals || [])
     .some(r => /lands in/.test(r.premise) && /P1\\.Sex/.test(r.premise));
@@ -7519,8 +8628,8 @@ console.log(JSON.stringify(pairs.map(([w, a, b]) => [w, a, b, a !== b])));
     # the bench may not say holds where a hook would refuse: the guards run on
     # the unsaved text as well, not only in the CLI
     S.append(("the bench runs the same guards the CLI does",
-              "duplicateGuardsOver(sources)" in open(VEIN, encoding="utf-8").read()
-              and "entryGuardsOver(sources)" in open(VEIN, encoding="utf-8").read()))
+              open(VEIN, encoding="utf-8").read().count("refusals += duplicateGuardsOver(") >= 3
+              and "refusals += entryGuardsOver(" in open(VEIN, encoding="utf-8").read()))
 
     # ── the two judges say the same words ──
     # The bench judges a single-file world in the browser, with the ported
@@ -7542,7 +8651,7 @@ console.log(JSON.stringify(pairs.map(([w, a, b]) => [w, a, b, a !== b])));
     def two_judges(world_text):
         p = os.path.join(par, "w.swift")
         open(p, "w").write(world_text)
-        raw = subprocess.run([os.path.join(HERE, "bin", "gate-judge"), "judge", p],
+        raw = subprocess.run([os.path.join(HERE, "bin", "organization-judge"), "judge", p],
                              capture_output=True, text=True).stdout
         binary = sorted(m.group(1).strip()
                         for m in re.finditer(r"^\s+\S+\.swift:\d+\s+(.+)$", raw, re.M))
@@ -7615,15 +8724,17 @@ console.log(JSON.stringify(pairs.map(([w, a, b]) => [w, a, b, a !== b])));
     # manifest lies about the court. One equality, all three records.
     _man_pin = re.search(r"verification-is-identification@([0-9a-f]+)",
                          open(os.path.join(HERE, "gate.manifest.swift")).read())
-    _ci_pin = re.search(r"bin/build-judge\.sh ([0-9a-f]+)",
-                        open(os.path.join(HERE, ".github", "workflows", "battery.yml")).read())
+    _ci_builds = re.findall(r'(?m)^\s*- run: (bin/build-judge\.sh[^\n]*)$',
+                            open(os.path.join(HERE, ".github", "workflows", "battery.yml")).read())
     _from = ""
     _fp = os.path.join(HERE, "bin", "gate-judge.from")
     if os.path.exists(_fp):
         _from = open(_fp).read().strip()
     S.append(("the manifest, CI and the build name one judge revision",
-              _man_pin and _ci_pin and _man_pin.group(1) == _ci_pin.group(1)
-              and _from.startswith(_man_pin.group(1))))
+              _man_pin and _from.startswith(_man_pin.group(1))
+              and len(_ci_builds) == 3
+              and all(command == 'bin/build-judge.sh "$(cat bin/gate-judge.from)"'
+                      for command in _ci_builds)))
 
     # ── AND THE ONE PLACE A SHIPPED BINARY IS BORN SAYS SO IN ITS OWN TEXT. A
     # release workflow is a claim about provenance, and a claim nobody checks is
@@ -7743,16 +8854,29 @@ console.log(JSON.stringify(pairs.map(([w, a, b]) => [w, a, b, a !== b])));
                  if "CourtCarrier" in d.get("conformances", []) and d.get("typeName")}
     _tree = {os.path.join("bin", f) for f in os.listdir(os.path.join(HERE, "bin"))
              if f.startswith("judge") and f.endswith(".js")
-             and f != "judge-cli.js"} | {"bin/gate-judge", "bin/gate-cli.swift"}
+             and f != "judge-cli.js"} | {"bin/gate-judge", "bin/organization-judge",
+                                         "bin/gate-cli.swift"}
     S.append(("the court roster and the tree name the same carriers, and each exists",
               _carriers and _carriers == _tree
               and all(os.path.exists(os.path.join(HERE, p)) for p in _carriers)))
+    # ── AND THE VEIN'S DOOR KNOWS THE THEORY'S PASSES BY THE THEORY'S OWN WORDS.
+    # The vein sends the theory's passes to the corpus's door and everything else
+    # to the company's plain court, so its list of those words is a second record
+    # of the door's: read here against the door at the judge's pin, both ways.
+    _door_pin = open(os.path.join(HERE, "bin", "gate-judge.from"), encoding="utf-8").read().strip()
+    _door = open(os.path.join(HERE, "bin", ".court", _door_pin, "Judge.swift"),
+                 encoding="utf-8").read()
+    _door_words = set(re.findall(r'arguments\.first == "([^"]+)"', _door))
+    _vein_list = re.search(r"let theoryPasses: Set<String> = \[([^\]]*)\]", gate_src, re.S)
+    _vein_words = set(re.findall(r'"([^"]+)"', _vein_list.group(1))) if _vein_list else set()
+    S.append(("the vein's door names the theory's passes in the words of the theory's door",
+              len(_door_words) >= 8 and _vein_words == _door_words))
 
     # ── what the strangler left: the Swift CLI answers every verb, and this
     # block walks them. The door is proven with a stub first, a fake binary
     # that claims a vein and speaks a marker, so the run knows delegation
-    # happened rather than assuming it; then the real binary is built and
-    # asked what each verb owes. GATE_CLI names the binary a run judges,
+    # happened rather than assuming it; the healthy binary built at the start
+    # is then asked what each verb owes. GATE_CLI names the binary a run judges,
     # which is the same lever a reader uses to try one by hand.
     # It runs wherever a toolchain stands, not wherever a mac does: the vein
     # is one
@@ -7761,19 +8885,17 @@ console.log(JSON.stringify(pairs.map(([w, a, b]) => [w, a, b, a !== b])));
     # lock made the battery a different SIZE per machine, and the README
     # count check said so the first time the battery ran on ubuntu.
     if shutil.which("swiftc"):
-        _b = subprocess.run(["bash", os.path.join(HERE, "bin", "build-cli.sh")],
-                            capture_output=True, text=True)
-        _cli_bin = os.path.join(HERE, "bin", "gate-cli")
-        # and when it does not build, the compiler's own words are in the run.
-        # A vein that compiled here and not on the other machine printed a red
-        # line and nothing else, and the job log is not readable without rights
-        # to the repository, so the platform difference had to be guessed at.
-        if _b.returncode != 0:
-            print("   swiftc said:", "\n   ".join(
-                [l for l in _b.stderr.split("\n") if "error:" in l][:4]
-                or _b.stderr.strip().split("\n")[:4]))
+        _delivery_buffer = subprocess.run([sys.executable, os.path.join(HERE, "tests", "delivery-buffer.py")],
+                                          capture_output=True, text=True, timeout=60)
+        if _delivery_buffer.returncode:
+            print("   delivery buffer:", (_delivery_buffer.stdout + _delivery_buffer.stderr)[-4000:])
+        S.append(("a file changed or lost after resolution refuses before its bytes are delivered",
+                  _delivery_buffer.returncode == 0))
+        _cli_bin = CLI_HERE
         S.append(("the swift vein builds, the court's sources compiled in at the judge's pin",
-                  _b.returncode == 0 and os.path.exists(_cli_bin)))
+                  _cli_build is not None and _cli_build.returncode == 0
+                  and os.path.exists(_cli_bin)
+                  and hashlib.sha256(open(_cli_bin, "rb").read()).hexdigest() == _cli_build_sha))
         _stub = os.path.join(tmp, "cli-stub")
         with open(_stub, "w") as f:
             f.write("#!/bin/sh\n"
@@ -8593,8 +9715,12 @@ console.log(JSON.stringify(pairs.map(([w, a, b]) => [w, a, b, a !== b])));
             _py = subprocess.run([GATE, "status", *_shape], cwd=HERE,
                                  capture_output=True, timeout=180,
                                  env={**os.environ, "GATE_CLI": CLI_HERE})
-            if _py.returncode not in (0, 1):
-                _s9apart.append("the tool's own repository: a code nobody reads")
+            if _shape:
+                valid = _py.returncode == 0 and palette_holds(json.loads(_py.stdout))
+            else:
+                valid = _py.returncode == 0 and _py.stdout.startswith(b"status: holds")
+            if not valid:
+                _s9apart.append("the tool's own repository lost its complete outcome")
             if not _shape:
                 _s9said["here"] = (_py.returncode, _py.stdout)
         if _s9apart:
@@ -8617,14 +9743,17 @@ console.log(JSON.stringify(pairs.map(([w, a, b]) => [w, a, b, a !== b])));
                              env={**os.environ, "GATE_SPAWN_LEDGER": "1",
                                   "GATE_CLI": CLI_HERE})
         _sp_said = _sp.stderr.strip().split("\n")[-1] if _sp.stderr.strip() else ""
-        if "spawns" in _sp_said and _sp_said != "gate-cli: spawns 5 (git 2, court 3)":
+        if "spawns" in _sp_said and _sp_said != "gate-cli: spawns 6 (git 2, court 4)":
             print("   the status verb spawns:", _sp_said)
         S.append(("the status verb spawns what it is built to need, and no more",
                   # two gits: the repository key, asked once and remembered, and
-                  # its fallback where a clone carries no remote. three courts:
-                  # the world and the two forms streams. A spawn in a loop shows
-                  # up here as 47 against 5 rather than as a slow afternoon.
-                  _sp_said == "gate-cli: spawns 5 (git 2, court 3)"))
+                  # its fallback where a clone carries no remote. four courts:
+                  # the world, the grants shelf page the ownership file restates,
+                  # and one per world of forms that has any code (the tool's words
+                  # with its verbs, and the ownership world; the letter is prose).
+                  # A spawn in a loop shows up here as 47 against 6 rather than as
+                  # a slow afternoon.
+                  _sp_said == "gate-cli: spawns 6 (git 2, court 4)"))
 
         # ── AND THE SAME ANSWERS OVER A SOCKET. The bench is the one surface
         # where a verb is asked for by a wire rather than by an argv, so the two
@@ -9666,9 +10795,9 @@ console.log(JSON.stringify(pairs.map(([w, a, b]) => [w, a, b, a !== b])));
                 ("a transfer, written", ["apply", "transfer", "Emp9001", "Engineering"], True),
                 ("a grant, written", ["apply", "grant", "Emp9000", "EngineeringShare"], True),
                 ("a revoke, written", ["apply", "revoke", "Emp9000", "FinanceShare"], True),
-                ("a hire, written",
+                ("a hire no longer offered",
                  ["apply", "hire", "Emp9100", "Manager", "Finance", "Ada", "Lovelace",
-                  "Y1815", "OnSite"], True),
+                  "Y1815", "OnSite"], False),
                 ("a move to where they already are",
                  ["apply", "transfer", "Emp9000", "Finance"], True)):
             # a writing shape gets its own copy, so nothing here reads what an
@@ -9693,6 +10822,9 @@ console.log(JSON.stringify(pairs.map(([w, a, b]) => [w, a, b, a !== b])));
             if not _keeps and _world != _before:
                 _cqw.append(_tag + ": a dry shape wrote on the world")
             _out = _said[0]
+            if _tag == "a hire no longer offered" and (
+                    _said[2] != 1 or b"unknown change hire" not in _said[1]):
+                _cqw.append(_tag + ": the removed editor still promises an answer")
             if _tag == "a view that holds" and b"ask view: holds" not in _out:
                 _cqw.append(_tag + ": a grant the world states does not hold")
             if _tag == "a view that does not" and b"refused" not in _out:
@@ -9818,7 +10950,7 @@ console.log(JSON.stringify(pairs.map(([w, a, b]) => [w, a, b, a !== b])));
         _mut = os.path.join(tmp, "mutant-vein")
         os.makedirs(_mut, exist_ok=True)
         _mut_src = open(os.path.join(HERE, "bin", "gate-cli.swift"), encoding="utf-8").read()
-        _mut_anchor = "func courtSays(_ asked: [String]) -> String {\n"
+        _mut_anchor = "func courtSays(_ asked: [String], wholeCompany: Bool = false) -> String {\n"
         open(os.path.join(_mut, "main.swift"), "w").write(_mut_src.replace(
             _mut_anchor,
             _mut_anchor + '    return "\\u{2713} THE JUDGE holds: 0 claims in 0.0 ms\\ncanon v2\\n"\n',
@@ -9836,9 +10968,24 @@ console.log(JSON.stringify(pairs.map(([w, a, b]) => [w, a, b, a !== b])));
                                      os.path.join(HERE, "bin", "shelf-into-swift.py"),
                                      os.path.join(HERE, "stdlib"), _pin],
                                     capture_output=True, timeout=180).stdout)
+        # and the count court's premise, by the same writer bin/build-cli.sh uses
+        _mut_premise = os.path.join(_mut, "premise.swift")
+        with open(_mut_premise, "wb") as _f:
+            _f.write(subprocess.run([sys.executable,
+                                     os.path.join(HERE, "bin", "premise-into-swift.py"),
+                                     os.path.join(HERE, "bin", ".court", _pin, "premise",
+                                                  "Primitive.swift")],
+                                    capture_output=True, timeout=180).stdout)
+        _mut_grammar = os.path.join(_mut, "grammar.swift")
+        with open(_mut_grammar, "wb") as _f:
+            _f.write(subprocess.check_output([sys.executable, os.path.join(HERE, "bin", "grammar-into-swift.py")]))
         _mb = subprocess.run(["swiftc", "-O", os.path.join(_mut, "main.swift"), _mut_shelf,
-                              *sorted(glob.glob(os.path.join(HERE, "bin", ".court",
-                                                             _pin, "*.swift"))),
+                              _mut_premise, _mut_grammar,
+                              *sorted(glob.glob(os.path.join(HERE, "bin", "grammar-law", "*.swift"))),
+                              *[f for f in sorted(glob.glob(os.path.join(HERE, "bin", ".court",
+                                                             _pin, "*.swift")))
+                                if os.path.basename(f) != "OrganizationJudge.swift"],
+                              os.path.join(_org, "OrganizationJudge.swift"),
                               "-o", _mut_bin], capture_output=True, text=True, timeout=900)
         if _mb.returncode != 0:
             print("   the mutant vein did not build:", "\n   ".join(
@@ -9870,7 +11017,7 @@ console.log(JSON.stringify(pairs.map(([w, a, b]) => [w, a, b, a !== b])));
         # pinned to the world planted for it, by the refusal's own words
         _s9has = lambda n, s: s.encode() in _s9said[n][1]
         S.append(("and every guard family fires on the world planted for it, alike",
-                  _s9said["here"][0] == 0 and b"holds" in _s9said["here"][1]
+                  _s9said["here"][0] == 0 and b"status: holds" in _s9said["here"][1]
                   and _s9said["demo"][0] == 1 and _s9has("demo", "Owns_3_carol")
                   and _s9said["org"][0] == 0 and _s9has("org", "declarations")
                   and _s9said["init"][0] == 0 and _s9has("init", "gate serve")
@@ -9892,7 +11039,8 @@ console.log(JSON.stringify(pairs.map(([w, a, b]) => [w, a, b, a !== b])));
                   and _s9has("thick", "outside this world")
                   and _s9has("thick", "one side of one")
                   and _s9has("thick", "is not a view")
-                  and _s9has("thick", "written on one line")
+                  # (a gated conformance on one line is read by the court at canon
+                  # four, so the shape guard retired and no longer fires here)
                   and _s9has("thick", "never closes")
                   and _s9has("thick", "an identity names")
                   and _s9has("thick", "which is not a name")
@@ -10562,7 +11710,7 @@ print(bad.isEmpty ? "CORE OK" : "APART: " + bad.joined(separator: ","))
                                       "status", "fsck", "badge", "survey", "findings",
                                       "report", "bare", "import", "verify", "library",
                                       "guard", "check", "ask", "diff", "apply", "change",
-                                      "attention", "demo", "serve"]))
+                                      "attention", "demo", "serve", "publish"]))
         # ── AND THE LEDGER IS READ AGAINST THE ROAD IT IS WALKING. The strangler
         # has a length and a position, and both were feelings: the list of moved
         # veins lived in the binary and the list of verbs lived in the python
@@ -10772,11 +11920,11 @@ print(bad.isEmpty ? "CORE OK" : "APART: " + bad.joined(separator: ","))
         # usage offers, the road is walked: from here the python side is a
         # decision rather than a dependency, and what is left of it is the
         # death commit.
-        S.append(("the ledger names verbs the usage offers, 27 of 27 carried",
+        S.append(("the ledger names verbs the usage offers, 28 of 28 carried",
                   set(_ledger) <= _verbs | _spellings_carried
-                  and len(_ledger) == 30
-                  and len(_carried_verbs) == 27
-                  and len(_verbs) == 27
+                  and len(_ledger) == 31
+                  and len(_carried_verbs) == 28
+                  and len(_verbs) == 28
                   # and a name on the ledger is a whole verb: a prefix claims
                   # everything under it, so half a verb would take argv nobody
                   # answers, which is why the unit of the move is the verb
@@ -10833,9 +11981,9 @@ print(bad.isEmpty ? "CORE OK" : "APART: " + bad.joined(separator: ","))
         S.append(("and a broken certificate refuses through the vein in the binary's words",
                   _vb2.returncode == _vv2.returncode == 1
                   and _vb2.stdout == _vv2.stdout
-                  and "be equivalent [Ordered]" in _vv2.stdout))
+                  and "be equivalent [CourtCarried]" in _vv2.stdout))
         _strip_ms = lambda s: re.sub(r"[\d.]+ ms", "N ms", s.strip())
-        _pb = subprocess.run([os.path.join(HERE, "bin", "gate-judge"),
+        _pb = subprocess.run([os.path.join(HERE, "bin", "organization-judge"),
                               "judge", _where_pages[0]],
                              capture_output=True, text=True)
         _pv = subprocess.run([_cli_bin, "judge", _where_pages[0]],
@@ -11017,7 +12165,9 @@ print(bad.isEmpty ? "CORE OK" : "APART: " + bad.joined(separator: ","))
     hits = []
     for f in ("gate", os.path.join("bin", "gate-cli.swift"),
               os.path.join("web", "ui.html"), os.path.join("bin", "judge.js"),
-              os.path.join("bin", "judge-where.js"), os.path.join("bin", "judge-cli.js")):
+              os.path.join("bin", "judge-wasm.js"), os.path.join("bin", "judge-cli.js"),
+              os.path.join("bin", "court-wasm", "node", "vi_court.js"),
+              os.path.join("bin", "court-wasm", "web", "vi_court.js")):
         text = open(os.path.join(HERE, f), encoding="utf-8", errors="replace").read()
         for pat in forbidden:
             for m in re.finditer(pat, text, re.M):
@@ -11059,10 +12209,11 @@ print(bad.isEmpty ? "CORE OK" : "APART: " + bad.joined(separator: ","))
     for _m in re.finditer(r"^\s*import (\w+)", open(VEIN).read(), re.M):
         _imp.add(_m.group(1))
     # the vein is swift now, and its whole list is the platform's own library:
-    # Foundation everywhere, and the two libcs behind a `canImport` because one
+    # Foundation/CoreFoundation (including JSON boolean identity), and the libcs
+    # behind a `canImport` because one
     # file builds on all three platforms. No package manager, no lockfile, and
     # nothing that could reach a network by being imported.
-    _white = {"Foundation", "Glibc", "WinSDK", "Darwin"}
+    _white = {"Foundation", "CoreFoundation", "Glibc", "WinSDK", "Darwin"}
     S.append(("the CLI imports the platform's own library alone, from a named list",
               _imp <= _white and "Foundation" in _imp))
     # ── AND A NUMBER IN THE PROSE IS THE NUMBER ITS OWNER HOLDS. Two counts
@@ -11165,7 +12316,7 @@ public enum MyWatch: AccessLedger {
     }
 }
 """)
-    raw = subprocess.run([os.path.join(HERE, "bin", "gate-judge"), "judge",
+    raw = subprocess.run([os.path.join(HERE, "bin", "organization-judge"), "judge",
                           os.path.join(cut, "gate.swift")], capture_output=True, text=True).stdout
     S.append(("the reference judge holds on a commented-out form, as it should",
               "holds" in raw))
@@ -11205,16 +12356,16 @@ public enum MyWatch: AccessLedger {
                       .split("\n")[int(x["address"].split(":")[1]) - 2]
                       or True for x in gates[:1])))
 
-    # ── AND `Reads` IS A CERTIFICATE, NOT A LABEL. Each verb states what it
-    # touches, and one of those words is load-bearing: `Run<V>: Safe where
-    # V.Does == Reads` in the tool's own forms certifies that a verb may be run
+    # ── AND `Looks` IS A CERTIFICATE, NOT A LABEL. Each verb states what it
+    # touches, and one of those words is load-bearing: `Run<Act>: Safe where
+    # Act.Does == Looks` in the tool's own forms certifies that a verb may be run
     # on anybody's clone at any moment. The guard over that table held the names
     # in both directions and never this word, so a verb that started writing
     # would have gone on being certified safe by the court. Nothing is read here:
-    # every verb whose record says `Reads` is RUN, in a world of its own with a
+    # every verb whose record says `Looks` is RUN, in a world of its own with a
     # personal world of its own, and both trees are compared by content before
     # and after. A word about what something does is checked by doing it.
-    said_reads = sorted(re.findall(r"public enum (\w+): Verb \{\s*\n\s*public typealias Does = Reads",
+    said_reads = sorted(re.findall(r"public enum (\w+): Verb \{\s*\n\s*public typealias Does = Looks",
                                    open(os.path.join(HERE, "stdlib", "verbs.swift"),
                                         encoding="utf-8").read()))
     touch_world = os.path.join(tmp, "touch")
@@ -11642,7 +12793,7 @@ public enum MyWatch: AccessLedger {
     if _shapes:
         print("   verbs answering outside the canon:", _shapes[:4])
     S.append(("a verb asked for nothing answers with a sentence, in a world and without one",
-              _stacks == [] and len(_all) == 27))
+              _stacks == [] and len(_all) == 28))
     # and a non-answer is a machine's object only for whoever asked for one
     _nj = subprocess.run([GATE, "my", "--json"],
                          cwd=os.path.join(tmp, "bare-no-my"),
@@ -11810,7 +12961,7 @@ public enum MyWatch: AccessLedger {
     finally:
         open(os.path.join(HERE, "stdlib", "verbs.swift"), "w").write(kept_readme)
     S.append(("the table of verbs and the dispatch are held to each other, in both directions",
-              run("status", cwd=HERE)[1]["verdict"] == "holds"
+              palette_holds(run("status", cwd=HERE)[1])
               # a record for a word this tool does not answer to: a promise it no longer keeps
               and any("`gate surveyy` is a record here" in r["claim"]
                       and r["address"].startswith("stdlib/verbs.swift:")
@@ -11819,15 +12970,16 @@ public enum MyWatch: AccessLedger {
               and any("`gate badge` is a word this tool answers to" in r["claim"]
                       for r in dropped["refusals"])))
 
-    # ── A LAW WRITTEN ON ONE LINE IS NOT A LAW, AND BOTH COURTS GO SILENT
+    # ── A LAW WRITTEN ON ONE LINE WAS NOT A LAW, AND BOTH COURTS WENT SILENT
     # TOGETHER. Found by hand on this tool's own demo world: move one newline in
-    # the forms file and `refused 1` becomes `holds` over nought judged — in
-    # the shipped binary and in the browser port alike. Every certificate over
-    # that law stops being checked and nothing says a word. Swift accepts both
-    # spellings identically, so the compiler tier still catches it; the fast
-    # tier, the one anybody runs on a keystroke, does not — and that is the tier
-    # people trust. The judge is the corpus's and pinned, so the shape is
-    # refused here rather than left to unjudge a world quietly.
+    # the forms file and `refused 1` became `holds` over nought judged, in the
+    # shipped binary and in the browser port alike, and a guard here refused the
+    # shape. At canon four the where court reads the one-line spelling in both
+    # carriers, the binary and the wasm module, and refuses the same lie at the
+    # same claim, so the guard retired with its reason: a refusal that says
+    # "read by no court" over a law a court reads would be this tool's own lie.
+    # What is held now is the finding reversed, so the day a court goes blind to
+    # one spelling again this check is the one that says so.
     onel = os.path.join(tmp, "oneline")
     os.makedirs(onel)
     two = open(os.path.join(HERE, "stdlib", "forms-grants.swift"), encoding="utf-8").read()
@@ -11853,19 +13005,20 @@ public enum MyWatch: AccessLedger {
         joined = run("status", cwd=HERE)[1]
     finally:
         open(os.path.join(HERE, "stdlib", "forms-grants.swift"), "w").write(kept_shelf)
-    S.append(("a law written on one line is read by no court, and gate refuses the shape",
-              # the finding itself, reproduced: one newline is the whole difference
+    said_one_port = subprocess.run(["node", os.path.join(HERE, "bin", "judge-cli.js"), "judge",
+                                    "where", one_path], capture_output=True, text=True).stdout
+    S.append(("a law written on one line is read like the broken one, and no guard calls it unread",
+              # one newline is no difference to either carrier any more
               "✗" in said_two and "Owns_c" in said_two
-              and "✗" not in said_one
-              and "0 equalities and 0 memberships judged" in said_one
-              # and the guard names it, at the line that writes it
-              and any("read by no court" in r["claim"]
-                      and r["address"].startswith("stdlib/forms-grants.swift:")
-                      for r in joined["refusals"])
-              and run("status", cwd=HERE)[1]["verdict"] == "holds"))
+              and said_one == said_two and said_one_port == said_one
+              # and nothing tells the operator their law is read by no court
+              and not any("read by no court" in r["claim"] for r in joined["refusals"])
+              and palette_holds(joined)
+              and palette_holds(run("status", cwd=HERE)[1])
+              and "func gateShapeGuards(" not in gate_src))
 
-    # ── AND THE HALF NO DECLARATION CAN PROVE. `Run<V>: Safe where V.Does ==
-    # Reads` is judged: a verb that admits to writing cannot be certified safe,
+    # ── AND THE HALF NO DECLARATION CAN PROVE. `Run<Act>: Safe where Act.Does ==
+    # Looks` is judged: a verb that admits to writing cannot be certified safe,
     # and the judge refuses the line. What the judge cannot know is whether the
     # verb tells the truth about itself, so every certified verb is run here and
     # the working copy held byte-identical afterwards. This is the claim CI, the
@@ -11949,8 +13102,11 @@ public enum MyWatch: AccessLedger {
               # returns no width at all, and this battery then died on a
               # KeyError before a single check had spoken. A run that dies
               # names nothing; a check that fails names itself.
-              and vanished.get("forms", {}).get("equalities", 0)
-                  < run("status", cwd=HERE)[1].get("forms", {}).get("equalities", 0)
+              # (the width is every judged claim, equalities and count readings)
+              and (vanished.get("forms", {}).get("equalities", 0)
+                   + vanished.get("forms", {}).get("readings", 0))
+                  < (run("status", cwd=HERE)[1].get("forms", {}).get("equalities", 0)
+                     + run("status", cwd=HERE)[1].get("forms", {}).get("readings", 0))
               # a row that names a dependency rather than a file this world
               # judges is not a ghost: the judge is held by a reproducible build
               and run("status", cwd=os.path.join(tmp, "demoworld"))[1]["verdict"] == "holds"))
@@ -12104,18 +13260,21 @@ public enum MyWatch: AccessLedger {
 
     # ── AND THE FIRST SURFACE IS THE RECORD, THE LAST IS THE SWIFT. A reader
     # arrives for what the world says, not for the ceremony it is written in, so
-    # the switch reads Bare, Table, Full in that order and the page opens on
-    # Bare. The Swift is the last tab and not a secret: it is the one source
-    # under all three, and `Full` is one click from every one of them.
+    # the switch reads Bare, Table, Drawing, Full in that order and the page
+    # opens on Bare. Drawing is the record's picture, offered only to a world
+    # that presents a canvas, and stands between the table and the source. The
+    # Swift is the last tab and not a secret: it is the one source under all
+    # four, and `Full` is one click from every one of them.
     _seg = re.search(r'id="view-seg">(.*?)</span>', ui, re.S).group(1)
     S.append(("the bench opens on the record, and the swift is the last tab",
-              [m for m in re.findall(r'data-m="(\w+)"', _seg)] == ["bare", "table", "full"]
+              [m for m in re.findall(r'data-m="(\w+)"', _seg)] == ["bare", "table", "drawing", "full"]
               and re.search(r'<button class="on" data-m="bare">', _seg)
               and 'let mode = "bare";' in ui
               # and a door may name its view, which is how the cover's picture
               # is taken in the one the bench opens on
               and 'const askedView = new URLSearchParams(location.search).get("view");' in ui
-              and 'if (["bare", "table", "full"].includes(askedView)) setMode(askedView);' in ui
+              and _table_door_probe.returncode == 0
+              and '? askedView : opensAs[first] || mode);' in ui
               # the shot is taken through that door, so the picture and the page
               # cannot drift apart about which surface a reader meets
               and "view=bare" in open(os.path.join(HERE, "bin", "shoot-bench.sh"),
@@ -12380,7 +13539,7 @@ public enum MyWatch: AccessLedger {
               and "noteProse(lead)" in ui))
 
     S.append(("a rung names what becomes yours, not what will be refused",
-              "from here on, what you commit is what holds" in next_src
+              "each commit is checked and unfinished claims stay named" in next_src
               # it survives once in the comment that records why it went, which
               # is the decision and not a thing anybody reads on a terminal
               and next_src.count("cannot be committed") == 1
@@ -12395,8 +13554,8 @@ public enum MyWatch: AccessLedger {
     # so `/ladder.css` read as `/ladder` on one side and vanished on the other.
     # Both sides are read the same way: the roster at the head of the door, and
     # the cases the door actually answers.
-    routes = set(re.findall(r'case \("(?:GET|POST|PUT)", "(/[a-z/.]*)"\)', src))
-    contract = set(re.findall(r"^//\s+(?:GET|POST|PUT)\s+(/[a-z/.]*)", src, re.M))
+    routes = set(re.findall(r'case \("(?:GET|POST|PUT)", "(/[a-z/.-]*)"\)', src))
+    contract = set(re.findall(r"^//\s+(?:GET|POST|PUT)\s+(/[a-z/.-]*)", src, re.M))
     S.append(("the bench's promised routes are the routes the server answers",
               contract == routes))
 
@@ -12462,7 +13621,7 @@ public enum MyWatch: AccessLedger {
     # that says what you just cloned did not. The check was green over a listing
     # missing two of its entries, which is a guard reading the wrong side of the
     # pair it holds.
-    _root_allow = {".github", ".githooks", ".gitignore", "README.md"}
+    _root_allow = {".gitattributes", ".github", ".githooks", ".gitignore", "README.md"}
     _tracked = subprocess.run(["git", "ls-files"], cwd=HERE,
                               capture_output=True, text=True).stdout.split("\n")
     _top = sorted({p.split("/")[0] for p in _tracked if p})
@@ -12504,13 +13663,14 @@ public enum MyWatch: AccessLedger {
     _uncovered = sorted(_panel_paths - _covered - {"/declare", "/seamside"})
     S.append(("the published bench carries every path the panel calls",
               _uncovered == []))
-    # and the road itself is written into the page: CI walks it headless on
-    # every push, from typing to the offer to red to green to kept
+    # The scene walk belongs to the external test harness; a delivery carries
+    # only its selected world. CI still walks typing, offers, red, green and kept.
     _ci = open(os.path.join(HERE, ".github", "workflows", "battery.yml"),
                encoding="utf-8").read()
-    S.append(("the published bench carries the user's road, and CI walks it",
-              "roadtest=1" in _pages_src and "ROAD ALL GREEN" in _pages_src
-              and "roadtest=1" in _ci))
+    _road = open(os.path.join(HERE, "tests", "roadtest.js"), encoding="utf-8").read()
+    S.append(("the user's road lives in the external harness, and CI walks it",
+              "roadtest=1" not in _pages_src and "ROAD ALL GREEN" not in _pages_src
+              and "ROAD ALL GREEN" in _road and "tests/roadtest.py" in _ci))
     # ── AND A RED IS ABOUT THIS REPOSITORY. There is one Pages site and one
     # deployment at a time, and the job had no concurrency group: a second push
     # while the first was deploying failed the second, and run 123 went red with
@@ -12562,7 +13722,7 @@ public enum MyWatch: AccessLedger {
         import yaml as _yaml
         # the windows road used to have a job of its own, which checked out and
         # ran with nothing built: it walks in the job that builds the binary now
-        _ci_parses = list(_yaml.safe_load(_ci)["jobs"]) == ["green", "linux",
+        _ci_parses = list(_yaml.safe_load(_ci)["jobs"]) == ["green", "linux", "playground",
                                                             "windows-vein", "pages",
                                                             "action"]
     except ImportError:
@@ -12574,7 +13734,7 @@ public enum MyWatch: AccessLedger {
               and "if: steps.site.outputs.on == 'true'" in _ci
               # and the road test is still upstream of the deploy, so a broken
               # page is red before publishing is even asked about
-              and _ci.index("ROAD ALL GREEN") < _ci.index("steps.site.outputs.on")))
+              and _ci.index("tests/roadtest.py") < _ci.index("steps.site.outputs.on")))
     S.append(("the deployment does not race itself, and says what a browser said",
               re.search(r"\n    concurrency:\n      group: pages\n"
                         r"      cancel-in-progress: false\n", _ci)
@@ -12583,7 +13743,7 @@ public enum MyWatch: AccessLedger {
               # gone, which is a guard reading the sentence about itself
               and not [l for l in _ci.split("\n")
                        if "2>/dev/null" in l and not l.lstrip().startswith("#")]
-              and "What the browser said" in _ci))
+              and "result.stderr" in open(os.path.join(HERE, "tests", "roadtest.py"), encoding="utf-8").read()))
 
     # ── AND THE MEASURED PAGE IS THE MEASURER'S OWN WORDS. `docs/BENCH.md` is
     # written by `bin/bench.py`, the cover sends a reader to it for the numbers
@@ -12903,8 +14063,9 @@ public enum MyWatch: AccessLedger {
     S.append(("opening a page keeps the view you are reading in",
               'setMode(opensAs[mod] || opensAs[mod + ".swift"] || mode);' in ui
               and "setMode(opensAs[file] || mode);" in ui
-              # exactly one path still takes Full on purpose, and it shows a line
-              and ui.count('setMode("full")') == 1
+              # Own pages keep the chosen view; taken text and delivery refusals
+              # open as source. Execute those transitions instead of counting calls.
+              and _read_transition.returncode == 0
               and 'setMode("full");' in ui.split("function reveal")[1][:400]
               # and the way back brings the view with the place
               and 'setMode(there.mode || "full");' in ui))
@@ -13162,7 +14323,7 @@ public enum MyWatch: AccessLedger {
     # scheduled a judgement of what the opener was already judging, so every click
     # on a name paid for two verdicts and two statuses.
     S.append(("the world is asked for all at once, and putting a file on the page judges it once",
-              "await Promise.all(want.map(f =>" in ui
+              "await readWorlds(missing)" in ui and "Promise.all(names.map(async name =>" in ui
               and 'if (!userEdit && change.origin === "setValue") return;' in ui
               # and whoever puts text on the page draws it: every opener that sets
               # the text now says so itself, in the order the world is read in
@@ -13274,8 +14435,8 @@ public enum MyWatch: AccessLedger {
               and any(r.get("address") == "stdlib/forms-organization.swift:2"
                       and "does not say what it is" in r.get("claim", "")
                       for r in roleless.get("refusals", []))
-              # and with the line back, this repository holds again
-              and run("status", cwd=HERE)[1].get("verdict") == "holds"))
+              # and restoring the line restores the complete verdict
+              and palette_holds(run("status", cwd=HERE)[1])))
 
     # ── AND WHOSE VOICE IT SPEAKS IN, WHICH THE ROLE NEVER SAID. The role names
     # the court that reads a file, and by that word the grammar somebody's own
@@ -13299,8 +14460,8 @@ public enum MyWatch: AccessLedger {
               and any(r.get("address") == "stdlib/forms-organization.swift:3"
                       and "does not say whose voice it speaks in" in r.get("claim", "")
                       for r in voiceless.get("refusals", []))
-              # and with the line back, this repository holds again
-              and run("status", cwd=HERE)[1].get("verdict") == "holds"))
+              # and restoring the line restores the complete verdict
+              and palette_holds(run("status", cwd=HERE)[1])))
     S.append(("a fifth sort is refused by name, and the refusal carries the whole list",
               fifth.get("verdict") == "refused"
               and any(r.get("address") == "stdlib/forms-organization.swift:3"
@@ -13320,7 +14481,7 @@ public enum MyWatch: AccessLedger {
                          if f.endswith(".swift"))
     S.append(("every page on the shelf says its sort, and says one of the four",
               sorted(speaks_map) == shelf_pages
-              and len(shelf_pages) == 16
+              and len(shelf_pages) == 17
               and sorted(speaks_map) == sorted(shelf_out.get("modules") or {})
               and set(speaks_map.values()) == {"a-domain", "the-tool", "the-bench", "the-reader"}
               # said by the page in its third line, never guessed from its name
@@ -13350,8 +14511,8 @@ public enum MyWatch: AccessLedger {
                       # and the refusal names the three it could have said
                       and "full · bare · table" in r.get("claim", "")
                       for r in _sideways.get("refusals", []))
-              # and with its own word back, this repository holds again
-              and run("status", cwd=HERE)[1].get("verdict") == "holds"))
+              # and restoring its word restores the complete verdict
+              and palette_holds(run("status", cwd=HERE)[1])))
 
     # ── AND A WORD THAT WAS RETIRED STAYS RETIRED. `genre` named a thing this
     # tool no longer believes in: a kind of world handed down, belonging to the
@@ -13506,23 +14667,122 @@ public enum MyWatch: AccessLedger {
               # against a sentence about one.
               and _shoot.index("exit 1") < _shoot.rindex("bench.png.from")))
 
-    # ── AND A SHORT RUN SAYS IT WAS SHORT, rather than blaming the README. The
-    # swift vein's checks run only where a toolchain stands, so on a machine
-    # without `swiftc` this battery is smaller, and the count below then went red
-    # under the name "the README counts these checks correctly": a true number on
-    # the cover, accused by a machine that had walked less of the battery. A
-    # contributor reading that edits the cover and breaks it for everybody else.
-    # The run says what it was first, and the count is asked against what it was.
+    _carried = subprocess.run([sys.executable, os.path.join(HERE, "tests", "carried-readings.py")],
+                              capture_output=True, text=True, timeout=180)
+    _carried_ui = subprocess.run(["node", os.path.join(HERE, "tests", "carried-readings.js")],
+                                 capture_output=True, text=True, timeout=60)
+    if _carried.returncode or _carried_ui.returncode:
+        print("   carried readings:", (_carried.stdout + _carried.stderr + _carried_ui.stdout + _carried_ui.stderr)[-4000:])
+    S.append(("taken text opens as verified read-only Theirs, without binary assets or a local fallback",
+              _carried.returncode == 0 and _carried_ui.returncode == 0))
+
+    _owner_profile = subprocess.run([sys.executable, os.path.join(HERE, "tests", "owner-profile.py")],
+                                    capture_output=True, text=True, timeout=900)
+    S.append(("the owner's resolved profile travels through autonomous publish and serve without a runtime tool",
+              _owner_profile.returncode == 0))
+    failed_output("owner profile", _owner_profile)
+
+    # World publication has its own Linux/macOS CI job and deadline. Its
+    # assertions are unchanged; it no longer consumes this battery's 2400 s.
+    _context_cache = subprocess.run([sys.executable, os.path.join(HERE, "tests", "context-cache.py")],
+                                    capture_output=True, text=True, timeout=120)
+    S.append(("context preparation shares identical effective bytes and invalidates changed sources, declarations and pins",
+              _context_cache.returncode == 0))
+    failed_output("context cache", _context_cache)
+
+    _playground_runner = subprocess.run([sys.executable, os.path.join(HERE, "tests", "playground-timeout.py")],
+                                        capture_output=True, text=True, timeout=30)
+    S.append(("the playground deadline kills a hanging reader tree and names its active phase",
+              _playground_runner.returncode == 0))
+    failed_output("playground deadline", _playground_runner)
+
+    _worlds_cache = subprocess.run([sys.executable, os.path.join(HERE, "tests", "worlds-cache.py")],
+                                   capture_output=True, text=True, timeout=180)
+    S.append(("parallel materialization preserves complete pinned snapshots and refuses damaged bytes",
+              _worlds_cache.returncode == 0))
+    failed_output("worlds cache", _worlds_cache)
+
+    _ci_output = subprocess.run([sys.executable, os.path.join(HERE, "tests", "ci-output.py")],
+                                capture_output=True, text=True, timeout=30)
+    S.append(("public CI annotations retain failure tails and Pages status names the failed step",
+              _ci_output.returncode == 0))
+    failed_output("CI output", _ci_output)
+
+    _dependency_boundary = subprocess.run([sys.executable, os.path.join(HERE, "tests", "dependency-boundary.py")],
+                                          capture_output=True, text=True, timeout=120)
+    if _dependency_boundary.returncode == 0:
+        _dependency_boundary = subprocess.run([sys.executable, os.path.join(HERE, "tests", "dependency-boundary-controls.py")],
+                                              capture_output=True, text=True, timeout=120)
+    S.append(("named subject dependencies cannot grow and retired ledger entries cannot return",
+              _dependency_boundary.returncode == 0))
+    failed_output("dependency boundary", _dependency_boundary)
+
+    _documents = subprocess.run(["node", os.path.join(HERE, "tests", "document-reader.js")],
+                                capture_output=True, text=True, timeout=60)
+    if _documents.returncode:
+        print("   DocumentReader:", (_documents.stdout + _documents.stderr)[-2500:])
+    S.append(("DocumentReader keeps declaration claims, body boundaries and outstanding requirements",
+              _documents.returncode == 0))
+
+    _drawing_inputs = subprocess.run([sys.executable, os.path.join(HERE, "tests", "drawing-inputs.py")],
+                                       capture_output=True, text=True, timeout=60)
+    if _drawing_inputs.returncode:
+        print("   Drawing inputs:", (_drawing_inputs.stdout + _drawing_inputs.stderr)[-2500:])
+    S.append(("Drawing follows declared row dependencies without changing their Kind",
+              _drawing_inputs.returncode == 0))
+
+    _scopes = subprocess.run([sys.executable, os.path.join(HERE, "tests", "grammar-contexts.py")],
+                              capture_output=True, text=True, timeout=240)
+    if _scopes.returncode:
+        print("   N2:", (_scopes.stdout + _scopes.stderr)[-3500:])
+    S.append(("declared languages and the owner's scope map admit an ordinary fourth module",
+              _scopes.returncode == 0))
+
+    _court_contexts = subprocess.run([sys.executable, os.path.join(HERE, "tests", "court-contexts.py")],
+                                      capture_output=True, text=True, timeout=240)
+    if _court_contexts.returncode:
+        print("   Court context/2:", (_court_contexts.stdout + _court_contexts.stderr)[-3500:])
+    S.append(("Court context/2 keeps module identity, own-file coverage and addressed exclusions",
+              _court_contexts.returncode == 0))
+
+    _context_edits = subprocess.run(["node", os.path.join(HERE, "tests", "court-contexts.js")],
+                                     capture_output=True, text=True, timeout=60)
+    if _context_edits.returncode:
+        print("   Court edits:", (_context_edits.stdout + _context_edits.stderr)[-3500:])
+    S.append(("edits replace owner question selectors and cannot retain an unrelated stale green",
+              _context_edits.returncode == 0))
+
+    _browser_grammar = subprocess.run([sys.executable, os.path.join(HERE, "tests", "grammar-policy.py")],
+                                      capture_output=True, text=True, timeout=240)
+    if _browser_grammar.returncode:
+        print("   Browser grammar:", (_browser_grammar.stdout + _browser_grammar.stderr)[-3500:])
+    S.append(("browser grammar findings match the pinned Swift policy inside the declared subset",
+              _browser_grammar.returncode == 0))
+
+    _world_readings = subprocess.run(["node", os.path.join(HERE, "tests", "read-worlds.js")],
+                                     capture_output=True, text=True, timeout=60)
+    if _world_readings.returncode:
+        print("   world readings:", (_world_readings.stdout + _world_readings.stderr)[-4000:])
+    S.append(("the first reading batches its files and later operations ask for fresh bytes",
+              _world_readings.returncode == 0))
+
+    _count_controls = subprocess.run([sys.executable, os.path.join(HERE, "tests", "battery-count.py")],
+                                      capture_output=True, text=True, timeout=60)
+    if _count_controls.returncode:
+        print("   battery stamp:", (_count_controls.stdout + _count_controls.stderr)[-4000:])
+    S.append(("the battery stamp repairs a merged registry and refuses manual drift",
+              _count_controls.returncode == 0))
+
+    # A short run names its missing registrations. It cannot change the full
+    # stamp or stand for a run with every toolchain present.
     _whole = shutil.which("swiftc") is not None
+    _registered = Registry(HERE, swift=_whole).count()
     if not _whole:
-        print("   this run walked no swift vein: swiftc is not on this machine, so it "
-              "is short of the README's count by the vein's own checks")
+        print(f"   this run is short: swiftc is not on this machine; "
+              f"{Registry(HERE).count() - _registered} registered checks were not walked")
     S.append(("this run walked the whole battery, toolchains and all", _whole))
-    claimed_n = re.search(r"the battery: (\d+) checks", readme)
-    S.append(("the README counts the whole battery, and a short run says it was short",
-              bool(claimed_n)
-              and (int(claimed_n.group(1)) == len(S) + 1 if _whole
-                   else int(claimed_n.group(1)) > len(S) + 1)))
+    S.append(("the README counts the registered battery, and this run walks its declared cases",
+              len(S) + 1 == _registered))
 
     # the names have been printed as they were decided; what is left is the word
     print("ALL GREEN" if all(ok for _, ok in S) else "RED")

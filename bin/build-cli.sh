@@ -48,17 +48,29 @@ fi
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 PIN="$(cat "$HERE/bin/gate-judge.from" | tr -d '[:space:]')"
 CACHE="$HERE/bin/.court/$PIN"
-if [ ! -d "$CACHE" ]; then
+# the count court's premise travels with the court: the corpus's Primitive at
+# the same pin, kept apart from the sources compiled in and carried as text
+PREMISE="$CACHE/premise/Primitive.swift"
+if [ ! -f "$PREMISE" ]; then
+    rm -rf "$CACHE"
     # ── AND THE FETCH DOES NOT TAKE THE COMPILER'S NAME. This directory was
     # called `TMP`, which is the variable the linker reads for its own scratch:
     # on a runner, where the cache is never warm, the fetch overwrote the
     # spelling handed over above and the link failed exactly as before. One
     # name, two meanings, and the second one silent.
     FETCH=$(mktemp -d)
-    git clone --depth 50 -q https://github.com/DanielSwift1992/verification-is-identification "$FETCH/vi"
+    # the bytes as committed: the count court reads the carried Primitive by its
+    # shape, and a checkout that turns LF into CRLF would hand it another file
+    # ── AND THE PIN IS REACHED HOWEVER OLD IT GROWS. A clone of the last 50
+    # commits held 0.2.3's pin in August and lost it by October, and that
+    # build stopped at "unable to read tree". The whole history comes without
+    # its file contents, and checking out the pin fetches the pin's files alone.
+    git clone --config core.autocrlf=false --config core.eol=lf --filter=blob:none --no-checkout -q \
+        https://github.com/DanielSwift1992/verification-is-identification "$FETCH/vi"
     git -C "$FETCH/vi" checkout -q "$PIN"
-    mkdir -p "$CACHE"
+    mkdir -p "$CACHE/premise"
     cp "$FETCH/vi/Sources/Court/"*.swift "$CACHE/"
+    cp "$FETCH/vi/Sources/VerificationIsIdentification/Primitive.swift" "$PREMISE"
     rm -rf "$FETCH"
 fi
 
@@ -82,16 +94,44 @@ cp "$HERE/bin/gate-cli.swift" "$BUILD/main.swift"
 # A clone still reads the disk first, so editing a page is still editing a
 # page; the snapshot is the fallback, and the battery holds the two equal.
 python3 "$HERE/bin/shelf-into-swift.py" "$HERE/stdlib" "$PIN" > "$BUILD/shelf.swift"
+# and the count court's premise beside it, as bytes the binary writes back out
+python3 "$HERE/bin/premise-into-swift.py" "$PREMISE" > "$BUILD/premise.swift"
+# ── AND THE COMPANY'S PLAIN COURT COMES FROM THE SHOWCASE, at its own pin
+# (bin/organization-court.from), beside the policy it reads. The theory's copy
+# stays out while the theory still carries one, and the court's door finds
+# the showcase's: the same type, the same calls, one source for it here.
+ORG="$("$HERE/bin/organization-court.sh")"
+mkdir -p "$BUILD/court"
+for f in "$CACHE"/*.swift; do
+    [ "$(basename "$f")" = "OrganizationJudge.swift" ] || cp "$f" "$BUILD/court/"
+done
+cp "$ORG/OrganizationJudge.swift" "$BUILD/court/"
+
+# The scope reader is the law owner's source, pinned and hash-checked together
+# with its exported type census. The source owner's map is a runtime input.
+python3 "$HERE/bin/grammar-into-swift.py" > "$BUILD/grammar.swift"
+cp "$HERE/bin/grammar-law/"*.swift "$BUILD/court/"
 
 if [ -n "$WINDOWS" ]; then
     # the same three places, spelled the way that toolchain reads them
     SAID="$(cd "$HERE" && pwd -W)"
     swiftc -O "$SAID/bin/.build/main.swift" "$SAID/bin/.build/shelf.swift" \
-        "$SAID/bin/.court/$PIN"/*.swift $LINK \
+        "$SAID/bin/.build/premise.swift" "$SAID/bin/.build/grammar.swift" \
+        "$SAID/bin/.build/court"/*.swift $LINK \
         -o "$SAID/bin/gate-cli$EXT"
 else
-    swiftc -O "$BUILD/main.swift" "$BUILD/shelf.swift" "$CACHE"/*.swift \
+    # ── AND ON LINUX THE BINARY CARRIES ITS OWN RUNTIME. Linked against the
+    # runner's Swift, 0.2.3's linux binary started on the image it was built
+    # on (Swift 6.3.3) and stopped starting when the image moved to 6.4:
+    # "undefined symbol: $s20FoundationEssentials4DataV15_RepresentationON".
+    # Swift on linux keeps no stable ABI between versions, so the runtime and
+    # Foundation are linked in. What stays outside is the C library: the
+    # binary starts where that is the builder's or newer, which is why the
+    # release builds on a named image rather than the newest one.
+    STATIC=""
+    [ "$(uname -s)" = "Linux" ] && STATIC="-static-stdlib"
+    swiftc -O $STATIC "$BUILD/main.swift" "$BUILD/shelf.swift" "$BUILD/premise.swift" "$BUILD/grammar.swift" "$BUILD/court"/*.swift \
         -o "$HERE/bin/gate-cli$EXT"
 fi
 rm -rf "$BUILD"
-echo "built bin/gate-cli$EXT (court at $(printf %.7s "$PIN"))"
+echo "built bin/gate-cli$EXT (court at $(printf %.7s "$PIN"), company court at $(head -1 "$ORG/from" | cut -c1-7))"

@@ -13,6 +13,11 @@
 // binary, a vendored one, or one on PATH, and says so in one sentence when
 // there is none.
 import Foundation
+// CoreFoundation is a module of its own on Darwin and linux; Windows keeps it
+// inside Foundation, and the one question asked of it below has a second door.
+#if canImport(CoreFoundation)
+import CoreFoundation
+#endif
 // the socket calls the bench is served over. Foundation carries them on Darwin,
 // linux keeps them in Glibc, and Windows in WinSDK under names of its own: this
 // vein builds on all three, so each says where its calls come from.
@@ -135,10 +140,9 @@ usage (the git-shaped porcelain):
                                        R is world|seam|forms, which court reads
                                        the row, and a row gate cannot place is
                                        refused rather than guessed at)
-  gate check view WHO DOC             · gate check administer|delete WHO DOC
+  gate check view WHO DOC
   gate diff  transfer WHO DEPT        · gate diff  grant|revoke WHO DOC
-  gate diff  hire ID RANK HOME GIVEN FAMILY BORN SITE
-  gate apply transfer|grant|revoke|hire ...   (writes only on holds, like a commit)
+  gate apply transfer|grant|revoke ...   (writes only on holds, like a commit)
   gate declare contract SPEC [-o F]   (the act of entry: a view of a document
   gate declare carrier DECL.json [-o F] you publish, or of what your build says
                                        your library carries. After this it is
@@ -179,7 +183,8 @@ usage (the git-shaped porcelain):
   gate import rbac rbac.json  ·  gate import refs tracker.json --code .
   gate export gate.swift -o people.csv grants.csv
   gate verify people.csv grants.csv --against CMD
-  gate serve [port]                   (local read-only JSON surface)
+  gate serve [repository] [port]      (the bench and its declared publication)
+  gate publish REPOSITORY -o SITE     (a static publication from its manifest)
   gate report [-o report.html]        (printable audit page. Nothing is written
                                        unless you name the file)
   gate guard [merge]                  (repo policy by the same gates: HEAD author
@@ -219,7 +224,7 @@ if args.isEmpty || args == ["--help"] || args == ["-h"] {
 let CARRIES = ["stdlib", "export", "seam", "log", "aside", "declare", "mine", "theirs",
                "init", "drift", "my", "status", "fsck", "badge", "survey", "findings",
                "report", "bare", "import", "verify", "library", "guard", "check", "ask",
-               "diff", "apply", "change", "attention", "demo", "serve"]
+               "diff", "apply", "change", "attention", "demo", "serve", "publish"]
 
 if args == ["--carries"] {
     out(CARRIES.joined(separator: "\n") + "\n")
@@ -301,13 +306,23 @@ func jsonObject(_ pairs: [(String, String)], indent: Int) -> String {
 
 // ── the court, carried in-process: the judge sources at the pin beside
 // bin/gate-judge (bin/gate-judge.from) are compiled into this binary by
-// bin/build-cli.sh, and this door is the corpus's own Judge.run verbatim:
-// plain, where, diff, chain. Not a python vein and not on the carries
-// list, because the python side has no judge verb. What holds the road is
-// the battery's parity against bin/gate-judge itself: byte for byte on
-// the where pages, clock stripped on the plain court.
+// bin/build-cli.sh, with the company's plain court from the showcase pin
+// (bin/organization-court.from). The theory's passes go through the corpus's
+// own door, Judge.run; a plain request, paths or `parse`, goes to the plain
+// court itself, which the theory's door no longer carries once the court has
+// moved. What holds the road is the battery's parity against bin/gate-judge
+// on the where pages, byte for byte, and against bin/organization-judge on
+// the plain court, clock stripped.
 if args.first == "judge" {
-    Judge.run(Array(args.dropFirst()))
+    let theoryPasses: Set<String> = ["where", "count", "where-report", "where-admit",
+                                     "replay-continuation", "continue", "coverage", "apply",
+                                     "diff", "chain"]
+    let asked = Array(args.dropFirst())
+    if let pass = asked.first, theoryPasses.contains(pass) {
+        Judge.run(asked)
+    } else {
+        OrganizationJudge.run(asked)
+    }
     exit(0)
 }
 
@@ -474,22 +489,21 @@ func spawnLedger() {
 // together: the rest was this tool asleep beside a finished process, and the
 // cover promises milliseconds on every keystroke.
 //
-// The child says when it is done, so the wake comes from the child: a
-// termination handler signals, and the caller waits on that. Every spawn in
-// this file goes through here, so the ledger the battery holds (`spawns 5`)
-// is unchanged and the price is paid once, at the door.
-func waitDone(_ p: Process) {
+// The child says when it is done. The handler belongs to the launch: it is
+// installed before run() can publish the process to Foundation's manager,
+// and is never changed afterwards. A completion that arrives before wait()
+// stays in the semaphore. There is no isRunning check and no handler reset
+// racing Foundation's read; the handler captures only the semaphore, not p.
+// Every Process launch in this file goes through this one door, including
+// children whose caller does not wait. The spawn ledger counts the callers.
+func startProcess(_ p: Process) throws -> DispatchSemaphore {
     let done = DispatchSemaphore(value: 0)
     p.terminationHandler = { _ in done.signal() }
-    // a process that already exited before the handler was set never signals,
-    // and `isRunning` is false by then: the handler is the fast path and this
-    // is the truth beside it
-    if !p.isRunning { p.terminationHandler = nil; return }
-    done.wait()
-    p.terminationHandler = nil
+    try p.run()
+    return done
 }
 
-func runGit(_ arguments: [String], _ cwd: String) -> String {
+func runGitBytes(_ arguments: [String], _ cwd: String) -> (code: Int32, bytes: Data) {
     mark("spawn:git")
     spawnCounted("git")
     let p = Process()
@@ -502,11 +516,16 @@ func runGit(_ arguments: [String], _ cwd: String) -> String {
     let pipe = Pipe(), quiet = Pipe()
     p.standardOutput = pipe
     p.standardError = quiet
-    do { try p.run() } catch { return "" }
+    let done: DispatchSemaphore
+    do { done = try startProcess(p) } catch { return (-1, Data()) }
     let said = pipe.fileHandleForReading.readDataToEndOfFile()
     quiet.fileHandleForReading.readDataToEndOfFile()
-    waitDone(p)
-    return String(data: said, encoding: .utf8) ?? ""
+    done.wait()
+    return (p.terminationStatus, said)
+}
+
+func runGit(_ arguments: [String], _ cwd: String) -> String {
+    String(data: runGitBytes(arguments, cwd).bytes, encoding: .utf8) ?? ""
 }
 
 // and the same call read for its verdict rather than its words: `ls-files
@@ -524,10 +543,11 @@ func gitExitCode(_ arguments: [String], _ cwd: String) -> Int32 {
     let quiet = Pipe(), alsoQuiet = Pipe()
     p.standardOutput = quiet
     p.standardError = alsoQuiet
-    do { try p.run() } catch { return 1 }
+    let done: DispatchSemaphore
+    do { done = try startProcess(p) } catch { return 1 }
     quiet.fileHandleForReading.readDataToEndOfFile()
     alsoQuiet.fileHandleForReading.readDataToEndOfFile()
-    waitDone(p)
+    done.wait()
     return p.terminationStatus
 }
 
@@ -602,47 +622,10 @@ func uncommented(_ text: String) -> String {
 struct WorldRow { let path: String; let role: String }
 
 func manifestRows(_ dir: String) -> (rows: [WorldRow], manifest: String?) {
-    let mp = (dir as NSString).appendingPathComponent("gate.manifest.swift")
-    guard let text = try? String(contentsOfFile: mp, encoding: .utf8) else { return ([], nil) }
-    let code = uncommented(text)
-    var literal: [String: String] = [:]
-    for m in matches("extension (\\w+)\\b[^{]*\\{(.*?)\\n(?=public |extension |\\Z)",
-                     code + "\n", dotAll: true) where m.count == 2 {
-        let found = matches("typeName:\\s*String\\s*\\{\\s*\"([^\"]*)\"\\s*\\}", m[1])
-        if let first = found.first, first.count == 1 { literal[m[0]] = first[0] }
-    }
-    // ── AND EACH ROW IS READ AT ITS OWN NAME. One pattern over the whole
-    // document, with the dot matching newlines, let the FIRST declaration in the
-    // file swallow the second: `public enum WorldFile: Role {}` is written on one
-    // line, so a body search from there ran to the next `\n}`, which belonged to
-    // the row after it. The python side never had that hole because it finds the
-    // heads first and then asks for each body BY NAME; this does the same, and
-    // the row it was losing is the first row of this repository's own layout.
-    var rows: [WorldRow] = []
-    for m in matches("public enum (\\w+): (Mine|Theirs|WorldFile|SeamFile) \\{", code)
-    where m.count == 2 {
-        guard let path = literal[m[0]], !path.isEmpty else { continue }
-        let body = matches("public enum " + m[0] + "\\b[^{]*\\{(.*?)\\n\\}",
-                           code + "\n", dotAll: true).first?.first ?? ""
-        let kind = matches("typealias\\s+Kind\\s*=\\s*(\\w+)", body).first?.first ?? ""
-        let role: String
-        switch kind {
-        case "WorldFile": role = "world"
-        case "SeamFile": role = "seam"
-        case "FormsFile": role = "forms"
-        case "JudgeFile": role = "judge"
-        case "CarriedFile": role = "carried"
-        case "ToolFile": role = "tool"
-        case "Seam": role = "seam"
-        default:
-            // no Kind axis: the older spellings said it in the atom itself
-            role = kind.isEmpty ? (m[1] == "WorldFile" ? "world"
-                                   : m[1] == "SeamFile" ? "seam" : "")
-                                : kind.lowercased()
-        }
-        if !role.isEmpty { rows.append(WorldRow(path: path, role: role)) }
-    }
-    return (rows, mp)
+    let parsed = layoutRowsFull(dir)
+    return (parsed.rows.compactMap { r in
+        r.role.map { WorldRow(path: r.path, role: $0) }
+    }, parsed.manifest)
 }
 
 // ── AND THE TWO FACTS A JOURNAL READS BESIDE GIT. An email is not a person:
@@ -916,7 +899,15 @@ func jsonPlace(_ text: String) -> (line: Int, column: Int) {
 // outside your own line do not change (kind 12).
 let ROLE_ATOM: [String: String] = ["world": "WorldFile", "seam": "SeamFile",
                                    "forms": "FormsFile", "judge": "JudgeFile",
-                                   "carried": "CarriedFile", "tool": "ToolFile"]
+                                   "carried": "CarriedFile", "tool": "ToolFile",
+                                   "drawing-profile": "DrawingProfileFile", "catalog": "CatalogFile"]
+
+// A Role may carry its installed Reader. Its declaration does not stop being
+// a declaration when its body is nonempty. The writer and guard ask alike.
+func declaresRole(_ text: String, _ atom: String) -> Bool {
+    return !matches("public\\s+enum\\s+" + atom + "\\s*:\\s*Role\\s*\\{",
+                    codeOf(text)).isEmpty
+}
 
 func rowAtom(_ rel: String) -> String {
     // the other carrier's `row_atom`: the path without its extension, sanitised,
@@ -1028,7 +1019,7 @@ func upsertRow(_ text: String, name: String, rel: String, kind: String, role: St
     guard let atom = ROLE_ATOM[role] else {
         cannot("no such role: " + role, "a row says which court reads it: world, seam or forms")
     }
-    if !said.contains("public enum " + atom + ": Role {}") {
+    if !declaresRole(said, atom) {
         ensure("public enum " + atom + ": Role {}")
     }
     if let opens = opens {
@@ -1359,13 +1350,47 @@ let STATUS_ROLES: [(String, String)] = [
     ("judge", "the court itself: held by a reproducible build, not by judgement"),
     ("carried", "brought here unchanged: held by its source's name and version, "
               + "and by no court of this world"),
+    ("drawing-profile", "profile structure and declared inputs, read by DrawingProfileReaderV1; "
+                        + "Drawing evidence is separate from the world's relations"),
+    ("catalog", "publication doors and worlds, read by CatalogReaderV1"),
     ("tool", "the tool's own source: held by the battery's parity, "
            + "and by no court of this world"),
 ]
-let ROLE_OF_KIND: [String: String] = ["WorldFile": "world", "SeamFile": "seam",
-                                      "FormsFile": "forms", "JudgeFile": "judge",
-                                      "CarriedFile": "carried", "ToolFile": "tool",
-                                      "Seam": "seam"]
+// The installed readers have code here; their Kind bindings live on the shelf.
+let ROLE_OF_READER = ["FormsReaderV1": "forms", "DocumentReaderV1": "forms", "OrganizationReaderV1": "world",
+                      "CarriedReaderV1": "carried", "DrawingProfileReaderV1": "drawing-profile", "CatalogReaderV1": "catalog"]
+let LEGACY_KIND_ROLES = ["SeamFile": "seam", "JudgeFile": "judge", "ToolFile": "tool", "Seam": "seam"]
+var KIND_READERS_CACHE: [String: String]? = nil
+func installedKindReaders() -> [String: String] {
+    if let readers = KIND_READERS_CACHE { return readers }
+    let text = codeOf(shelf().first(where: { $0.name == "manifest" })?.text ?? "")
+    var readers: [String: String] = [:]
+    for m in matches("public enum (\\w+): Role \\{([^{}]*)\\}", text, dotAll: true) {
+        let axes = matches("typealias Reader\\s*=\\s*(\\w+)", m[1])
+        if axes.count == 1 { readers[m[0]] = axes[0][0] }
+    }
+    KIND_READERS_CACHE = readers
+    return readers
+}
+func roleOfKind(_ kind: String) -> String {
+    if let reader = installedKindReaders()[kind] { return ROLE_OF_READER[reader] ?? kind.lowercased() }
+    return LEGACY_KIND_ROLES[kind] ?? kind.lowercased()
+}
+func unsupportedKind(_ kind: String) -> Bool {
+    return LEGACY_KIND_ROLES[kind] == nil
+        && installedKindReaders()[kind].flatMap { ROLE_OF_READER[$0] } == nil
+}
+
+func kindBindingGuards(_ rows: [LayoutRow], _ manifest: String) -> [(address: String, claim: String)] {
+    let text = codeOf(manifest)
+    return rows.compactMap { row in
+        guard let kind = row.kind, let reader = installedKindReaders()[kind] else { return nil }
+        let bodies = matches("public enum " + kind + "\\s*:\\s*Role\\s*\\{([^{}]*)\\}", text, dotAll: true)
+        let axes = bodies.flatMap { matches("typealias Reader\\s*=\\s*(\\w+)", $0[0]).map { $0[0] } }
+        guard !axes.isEmpty && axes != [reader] else { return nil }
+        return ("gate.manifest.swift:\(row.line)", "\(row.name ?? row.path): Kind \(kind) uses installed Reader \(reader); a local declaration cannot replace it")
+    }
+}
 
 // the shelf, loaded once per run the way the other carrier loads it at import:
 // filled by the status door, empty on every carried argv, so no vein pays for
@@ -1375,6 +1400,7 @@ var SHELF_ORDER: [String] = []
 var SHIPPED_SET: Set<String> = []
 
 func loadStatusShelf() {
+    if !STDLIB_TEXTS.isEmpty { return }
     for page in shelf() {
         STDLIB_TEXTS[page.name] = page.text
         SHELF_ORDER.append(page.name)
@@ -1561,7 +1587,7 @@ func canonicalPath(_ p: String, _ st: PathStyle = HOST_PATHS) -> String {
 func readText(_ path: String) -> String? {
     // read with python's errors="replace": a byte that is not utf-8 becomes the
     // replacement character rather than a refusal to read the file at all
-    guard let data = FileManager.default.contents(atPath: path) else { return nil }
+    guard let data = inputBytes(path) else { return nil }
     let text = String(decoding: data, as: UTF8.self)
     // ── AND A MARK AT THE HEAD OF A FILE IS NOT ITS FIRST CHARACTER. A file a
     // Windows editor wrote opens with a byte-order mark, and the other carrier
@@ -1595,12 +1621,24 @@ func matchesAt(_ pattern: String, _ text: String,
     if lines { opts.insert(.anchorsMatchLines) }
     guard let re = compiled(pattern, opts) else { return [] }
     let ns = text as NSString
-    return re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { m in
+    let hits = re.matches(in: text, range: NSRange(location: 0, length: ns.length))
+    guard !hits.isEmpty else { return [] }
+    // Regex locations are UTF-16 offsets in nondecreasing order. Before each
+    // hit, line = 1 + the number of LF units in [0, cursor).
+    // On Darwin, the former Foundation split can differ after LF plus a
+    // nonspacing/enclosing mark, variation selector or emoji modifier.
+    // Each unit is visited at most once; no growing prefix is copied or split.
+    let units = Array(text.utf16)
+    var cursor = 0, line = 1
+    return hits.map { m in
+        while cursor < m.range.location {
+            if units[cursor] == 10 { line += 1 }
+            cursor += 1
+        }
         let groups = (1..<m.numberOfRanges).map { i in
             m.range(at: i).location == NSNotFound ? "" : ns.substring(with: m.range(at: i))
         }
-        let before = ns.substring(to: m.range.location)
-        return (groups, before.components(separatedBy: "\n").count)
+        return (groups, line)
     }
 }
 
@@ -1615,7 +1653,7 @@ func matchAt(_ text: String, _ pattern: String) -> [String]? {
     }
 }
 
-struct LayoutRow {
+struct LayoutRow: Equatable {
     var name: String?
     var source: String
     var path: String
@@ -1623,7 +1661,10 @@ struct LayoutRow {
     var from: String?
     var written: String?
     var opens: String?
+    var language: String? = nil
     var line: Int
+    var kind: String? = nil
+    var drawingInputs: [String] = []
 }
 struct Layout { var manifest: String; var rows: [LayoutRow] }
 struct WorldState { var facts: String?; var tables: String?; var layout: Layout? }
@@ -1665,7 +1706,7 @@ func layoutRowsFull(_ dir: String, said: String? = nil) -> (rows: [LayoutRow], m
         if path.isEmpty { path = field("typeName") ?? "" }
         if path.isEmpty { continue }
         let kind = axis("Kind")
-        var role: String? = kind.map { ROLE_OF_KIND[$0] ?? $0.lowercased() }
+        var role: String? = kind.map { roleOfKind($0) }
         if role == nil || role!.isEmpty { role = field("role") }
         if role == nil || role!.isEmpty {
             role = atom == "WorldFile" ? "world" : atom == "SeamFile" ? "seam" : nil
@@ -1676,7 +1717,8 @@ func layoutRowsFull(_ dir: String, said: String? = nil) -> (rows: [LayoutRow], m
                               source: (atom == "Mine" || atom == "WorldFile") ? "mine" : "theirs",
                               path: path, role: role,
                               from: (from?.isEmpty ?? true) ? nil : from,
-                              written: axis("Written"), opens: axis("Opens"), line: at))
+                              written: axis("Written"), opens: axis("Opens"), language: axis("Language"), line: at, kind: kind,
+                              drawingInputs: matches("typealias DrawingInputs\\s*=\\s*([^\\n}]+)", both).compactMap { $0.first }))
     }
     if rows.isEmpty && !code.contains("Mine") && !code.contains("WorldFile") {
         // older layouts: a bare list of paths, every one of them a world file
@@ -1686,6 +1728,44 @@ func layoutRowsFull(_ dir: String, said: String? = nil) -> (rows: [LayoutRow], m
         }
     }
     return (rows, mp)
+}
+
+// A document can read another declared source without changing its Kind.
+// This is the same input closure for status, serve, publication and Drawing.
+func drawingInputs(_ rows: [LayoutRow]) -> (paths: [String], bad: [(address: String, claim: String)]) {
+    var bad: [(address: String, claim: String)] = [], edges: [String: [String]] = [:]
+    let named = Dictionary(grouping: rows.compactMap { r in r.name.map { ($0, r) } }, by: { $0.0 })
+    for row in rows {
+        guard let name = row.name, !row.drawingInputs.isEmpty else { continue }
+        let at = "gate.manifest.swift:\(row.line)"
+        guard row.drawingInputs.count == 1 else { bad.append((at, "\(name): DrawingInputs must be declared once")); continue }
+        let raw = row.drawingInputs[0].trimmingCharacters(in: .whitespaces)
+        let single = raw.range(of: #"^\w+$"#, options: .regularExpression) != nil
+        let tuple = raw.range(of: #"^\(\s*\w+(?:\s*,\s*\w+)+\s*\)$"#, options: .regularExpression) != nil
+        guard single || tuple else { bad.append((at, "\(name): DrawingInputs needs one manifest row or a tuple of rows")); continue }
+        let refs = matches(#"(\w+)"#, raw).compactMap { $0.first }
+        guard Set(refs).count == refs.count else { bad.append((at, "\(name): DrawingInputs repeats a row")); continue }
+        for ref in refs where named[ref]?.count != 1 { bad.append((at, "\(name): DrawingInputs row '\(ref)' is missing or ambiguous")) }
+        edges[name] = refs
+    }
+    var finished = Set<String>(), visiting = Set<String>()
+    func check(_ name: String) {
+        guard !finished.contains(name) else { return }
+        guard visiting.insert(name).inserted else {
+            bad.append(("gate.manifest.swift:\(named[name]?.first?.1.line ?? 1)", "DrawingInputs cycle at '\(name)'")); return
+        }
+        for next in edges[name] ?? [] { check(next) }
+        visiting.remove(name); finished.insert(name)
+    }
+    for name in edges.keys.sorted() { check(name) }
+    var reached = Set<String>()
+    func include(_ name: String) {
+        guard reached.insert(name).inserted else { return }
+        for next in edges[name] ?? [] { include(next) }
+    }
+    for row in rows where row.kind == "DocumentFile" { if let name = row.name { include(name) } }
+    let paths = reached.compactMap { named[$0]?.first?.1.path }
+    return (Array(Set(paths)).sorted(), bad)
 }
 
 func discoverWorld() -> WorldState {
@@ -1710,26 +1790,21 @@ func discoverWorld() -> WorldState {
         guard let up = parentPath(d), up != d else { break }
         d = up
     }
-    if let corpus = ProcessInfo.processInfo.environment["GATE_CORPUS"], !corpus.isEmpty {
-        let f = (((corpus as NSString).appendingPathComponent("Sources") as NSString)
-            .appendingPathComponent("Organization") as NSString)
-            .appendingPathComponent("System/GeneratedTeam.swift")
-        return WorldState(facts: f, tables: nil, layout: nil)
-    }
     return WorldState(facts: nil, tables: nil, layout: nil)
 }
 
-func worldFilesOf(_ w: WorldState) -> [String] {
+func worldFilesOf(_ w: WorldState, resolved: TakenResolution? = nil) -> [String] {
     var files: [String] = []
-    if let f = w.facts, FileManager.default.fileExists(atPath: f) { files.append(f) }
-    if let d = layoutDir(w) {
+    let taken = resolved ?? takenInputs(w)
+    if let f = w.facts, FileManager.default.fileExists(atPath: f),
+       !(taken.v2 && (w.layout?.rows.contains { $0.source == "theirs" && joinPath(layoutDir(w) ?? ".", $0.path) == f } ?? false)) { files.append(f) }
+    if layoutDir(w) != nil {
         // filtered against the list as it stood, not as it grows: two rows
         // naming one file keep both copies here, exactly as the other carrier
         // keeps them, and the second-row guard is the one that refuses the pair
         let stood = files
         for r in w.layout!.rows where r.role == "world" {
-            let p = (d as NSString).appendingPathComponent(r.path)
-            if !stood.contains(p) { files.append(p) }
+            if let p = inputPath(r, w, taken), !stood.contains(p) { files.append(p) }
         }
     }
     return files
@@ -1811,6 +1886,246 @@ func undeclaredHere(_ w: WorldState) -> [String] {
     return out
 }
 
+// JSON is decoded by Foundation. This index keeps source lines for diagnostics,
+// including compact records and a repeated object key that decoding would hide.
+struct RecordSpots {
+    var lines: [String: Int] = [:]
+    var repeated: [(String, Int)] = []
+    init(_ text: String) {
+        let tokens = matchesAt(#"("(?:\\.|[^"\\])*"|[{}\[\]:,]|[^\s{}\[\]:,]+)"#, text)
+        var i = 0
+        func walk(_ path: String) {
+            guard i < tokens.count else { return }
+            let token = tokens[i].groups[0]
+            lines[path] = tokens[i].line
+            i += 1
+            if token == "{" {
+                var keys = Set<String>()
+                while i < tokens.count && tokens[i].groups[0] != "}" {
+                    let keyToken = tokens[i]
+                    let key = (try? JSONSerialization.jsonObject(with: Data(keyToken.groups[0].utf8), options: .fragmentsAllowed)) as? String ?? ""
+                    let next = path + "/" + key
+                    if !keys.insert(key).inserted { repeated.append((next, keyToken.line)) }
+                    i += 2 // key and colon
+                    walk(next)
+                    if i < tokens.count && tokens[i].groups[0] == "," { i += 1 }
+                }
+                i += 1
+            } else if token == "[" {
+                var index = 0
+                while i < tokens.count && tokens[i].groups[0] != "]" {
+                    walk(path + "/\(index)"); index += 1
+                    if i < tokens.count && tokens[i].groups[0] == "," { i += 1 }
+                }
+                i += 1
+            }
+        }
+        walk("")
+    }
+    func address(_ path: String) -> String {
+        var parent = path
+        while lines[parent] == nil && !parent.isEmpty {
+            parent = String(parent.prefix(upTo: parent.lastIndex(of: "/")!))
+        }
+        return ".gate/forms-definitions.json:\(lines[parent] ?? 1)"
+    }
+}
+
+// The byte resolver is independent of a file's reader. A v2 record names every
+// taken input, including its local view, Git object and exact source bytes.
+struct TakenResolution {
+    var v2 = false
+    var paths: [String: String] = [:]
+    var inputs: [String: [String: String]] = [:]
+    var addresses: [String: String] = [:]
+    var bad: [(address: String, claim: String)] = []
+    var bytes: [String: Data] = [:]
+}
+struct TakenRequestEntry {
+    var manifest: Data?
+    var record: Data?
+    var rows: [LayoutRow]
+    var required: Set<String>?
+    var result: TakenResolution
+}
+// A response owns its verified bytes. The next HTTP request starts empty;
+// file metadata never substitutes for a byte check, including restored mtimes.
+var TAKEN_REQUEST: [String: TakenRequestEntry]? = nil
+var TAKEN_REQUIRED: Set<String>? = nil
+func inputBytes(_ path: String) -> Data? {
+    if let entries = TAKEN_REQUEST {
+        for entry in entries.values {
+            if let bytes = entry.result.bytes[path] { return bytes }
+        }
+    }
+    return FileManager.default.contents(atPath: path)
+}
+func takenInputs(_ w: WorldState) -> TakenResolution {
+    guard TAKEN_REQUEST != nil, let root = layoutDir(w), let layout = w.layout else {
+        return resolveTakenInputs(w)
+    }
+    let manifest = FileManager.default.contents(atPath: layout.manifest)
+    let record = FileManager.default.contents(atPath: joinPath(root, ".gate/forms-definitions.json"))
+    if let entry = TAKEN_REQUEST?[root], entry.manifest == manifest,
+       entry.record == record, entry.rows == layout.rows, entry.required == TAKEN_REQUIRED { return entry.result }
+    let result = resolveTakenInputs(w)
+    TAKEN_REQUEST?[root] = TakenRequestEntry(manifest: manifest, record: record, rows: layout.rows, required: TAKEN_REQUIRED, result: result)
+    return result
+}
+func resolveTakenInputs(_ w: WorldState) -> TakenResolution {
+    var result = TakenResolution()
+    guard let root = layoutDir(w), let layout = w.layout else { return result }
+    let record = joinPath(root, ".gate/forms-definitions.json")
+    guard let data = FileManager.default.contents(atPath: record) else {
+        // Legacy single-world rows can name non-Git revisions. A full Git pin
+        // needs its byte record even when that record has been lost.
+        for row in layout.rows where row.source == "theirs"
+            && row.from?.range(of: "@([0-9a-f]{40})$", options: .regularExpression) != nil {
+            result.v2 = true
+            result.bad.append(("gate.manifest.swift:\(row.line)", "\(row.name ?? row.path): the pinned input record .gate/forms-definitions.json is missing"))
+        }
+        return result
+    }
+    guard let spec = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+        result.v2 = true
+        result.bad.append((".gate/forms-definitions.json:1", "cannot read the input record as a JSON object")); return result
+    }
+    let spots = RecordSpots(String(decoding: data, as: UTF8.self))
+    func bad(_ path: String, _ why: String) {
+        var context = ""
+        let components = path.split(separator: "/")
+        if components.count >= 2, components[0] == "files", let index = Int(components[1]),
+           let entries = spec["files"] as? [[String: Any]], entries.indices.contains(index) {
+            let input = entries[index], name = input["row"] as? String ?? "?"
+            let row = layout.rows.first { $0.name == name }
+            context = " · declared input " + name
+                + (row.map { " at gate.manifest.swift:\($0.line)" } ?? "")
+                + " · " + (input["repository"] as? String ?? "?") + "@"
+                + (input["revision"] as? String ?? "?") + ":" + (input["source_path"] as? String ?? "?")
+        }
+        result.bad.append((spots.address(path), path + ": " + why + context))
+    }
+    let fragmentHint = "plain_fragments is reserved empty; split the file into data and page"
+    if let value = spec["plain_fragments"], !(value is [Any]) || !(value as? [Any] ?? []).isEmpty {
+        bad("/plain_fragments", fragmentHint)
+    }
+    for (path, line) in spots.repeated where path == "/plain_fragments" {
+        result.bad.append((".gate/forms-definitions.json:\(line)", path + ": repeated field; " + fragmentHint))
+    }
+    if spec["format"] == nil || spec["format"] as? Int == 1 { return result }
+    result.v2 = true
+    guard spec["format"] as? Int == 2 else {
+        bad("/format", "unsupported input record version; expected 2"); return result
+    }
+    let fields: Set<String> = ["format", "files", "languages", "plain_fragments", "shelf_overrides"]
+    for field in Set(spec.keys).subtracting(fields).sorted() { bad("/" + field, "unknown v2 record field") }
+    for (path, line) in spots.repeated where path == "/format" || path == "/files" || path.hasPrefix("/files/")
+        || path == "/languages" || path.hasPrefix("/languages/") {
+        result.bad.append((".gate/forms-definitions.json:\(line)", path + ": repeated field"))
+    }
+    guard let files = spec["files"] as? [Any] else {
+        bad("/files", "v2 files must be an input list"); return result
+    }
+    var seen = Set<String>()
+    var valid: [(String, [String: String])] = []
+    for (index, value) in files.enumerated() {
+        let at = "/files/\(index)"
+        guard let item = value as? [String: Any] else { bad(at, "an input must be an object"); continue }
+        let fields: Set<String> = ["row", "path", "repository", "revision", "source_path", "sha256"]
+        for field in fields.sorted() where !(item[field] is String) { bad(at + "/" + field, "a string is required") }
+        for field in Set(item.keys).subtracting(fields).sorted() { bad(at + "/" + field, "unknown input field") }
+        guard let input = item as? [String: String], Set(input.keys) == fields else { continue }
+        let name = input["row"]!
+        guard seen.insert(name).inserted else { bad(at + "/row", "repeated row " + name); continue }
+        let rows = layout.rows.filter { $0.name == name }
+        guard rows.count == 1, let row = rows.first, row.source == "theirs" else {
+            bad(at + "/row", "\(name) must name exactly one Theirs row in gate.manifest.swift"); continue
+        }
+        guard row.kind != nil else {
+            bad(at + "/row", "\(name): a v2 input row must declare Kind at gate.manifest.swift:\(row.line)"); continue
+        }
+        result.addresses[name] = spots.address(at)
+        let before = result.bad.count
+        let repository = input["repository"]!, revision = input["revision"]!, source = input["source_path"]!
+        let path = input["path"]!, hash = input["sha256"]!
+        if repository.isEmpty || repository.hasPrefix("-") || repository.contains("\n") || repository.contains("\0") {
+            bad(at + "/repository", "a Git URL or local repository path is required")
+        }
+        if revision.range(of: "^[0-9a-f]{40}$", options: .regularExpression) == nil {
+            bad(at + "/revision", "a full lowercase commit ID is required")
+        }
+        if source.isEmpty || source.contains("\\") || pathRoot(source, .posix) != nil || pathRoot(source, .windows) != nil
+            || source.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0.isEmpty || $0 == ".." || $0 == "." }) {
+            bad(at + "/source_path", "a repository-relative file path is required")
+        }
+        if path.isEmpty || pathRoot(path, .posix) != nil || pathRoot(path, .windows) != nil || leavesWorldHere(path, root) || path != row.path {
+            bad(at + "/path", "\(name) path disagrees with its manifest or leaves the world")
+        }
+        if hash.range(of: "^[0-9a-f]{64}$", options: .regularExpression) == nil { bad(at + "/sha256", "a lowercase SHA-256 is required") }
+        if row.from != repository + "@" + revision {
+            bad(at + "/revision", "\(name) At disagrees with repository@revision at gate.manifest.swift:\(row.line)")
+        }
+        if result.bad.count == before { valid.append((at, input)) }
+    }
+    for row in layout.rows where row.source == "theirs" && row.name != nil && !seen.contains(row.name!) {
+        result.bad.append(("gate.manifest.swift:\(row.line)", "\(row.name!): a v2 taken row has no input record"))
+    }
+    guard result.bad.isEmpty else { return result }
+    for (at, input) in valid {
+        // The resource reader needs these inputs, while a list or a verdict
+        // needs the complete set. Structural record errors stay global.
+        if let required = TAKEN_REQUIRED, !required.contains(input["path"]!) { continue }
+        let name = input["row"]!, repository = input["repository"]!, revision = input["revision"]!
+        let source = input["source_path"]!, hash = input["sha256"]!
+        let cache = joinPath(toolRoot(), "bin/.inputs/" + sha256Hex(Data(repository.utf8)) + "/" + revision)
+        let target = joinPath(cache, sha256Hex(Data(source.utf8)) + "-" + hash)
+        if let bytes = FileManager.default.contents(atPath: target) {
+            guard sha256Hex(bytes) == hash else {
+                bad(at + "/sha256", "\(name): cached input bytes differ from their sha256"); continue
+            }
+            result.paths[name] = target; result.inputs[name] = input
+            result.bytes[target] = bytes; continue
+        }
+        do { try FileManager.default.createDirectory(atPath: cache, withIntermediateDirectories: true) }
+        catch { bad(at, "\(name): cannot create the input cache"); continue }
+        func git(_ words: [String]) -> (Int32, Data) {
+            let reply = runGitBytes(words, cache)
+            return (reply.code, reply.bytes)
+        }
+        if !FileManager.default.fileExists(atPath: joinPath(cache, ".git")), git(["init", "-q"]).0 != 0 {
+            bad(at, "\(name): cannot initialize the input object cache"); continue
+        }
+        if git(["cat-file", "-t", revision]).0 != 0,
+           git(["fetch", "-q", "--depth", "1", repository, revision]).0 != 0 {
+            bad(at + "/revision", "\(name): cannot fetch the declared input revision"); continue
+        }
+        let objectKind = git(["cat-file", "-t", revision])
+        guard String(data: objectKind.1, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) == "commit" else {
+            bad(at + "/revision", "\(name): the pin must name a commit"); continue
+        }
+        guard String(data: git(["cat-file", "-t", revision + ":" + source]).1, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) == "blob" else {
+            bad(at + "/source_path", "\(name): source_path must name a file blob at the pin"); continue
+        }
+        let blob = git(["show", revision + ":" + source])
+        guard blob.0 == 0, sha256Hex(blob.1) == hash else {
+            bad(at + "/sha256", "\(name): Git source bytes differ from the declared sha256"); continue
+        }
+        do {
+            try blob.1.write(to: URL(fileURLWithPath: target), options: .atomic)
+            result.paths[name] = target
+            result.inputs[name] = input
+            result.bytes[target] = blob.1
+        } catch { bad(at, "\(name): cannot cache the verified input") }
+    }
+    return result
+}
+
+func inputPath(_ row: LayoutRow, _ w: WorldState, _ taken: TakenResolution) -> String? {
+    if row.source == "theirs" && taken.v2 { return taken.paths[row.name ?? ""] }
+    guard let root = layoutDir(w), !leavesWorldHere(row.path, root) else { return nil }
+    return joinPath(root, row.path)
+}
+
 // `liveRows` and `liveText` override the document on disk, for the same reason
 // the forms guard takes a live text: the layout is judged as it is typed, and
 // two of the checks below ask what the DOCUMENT says rather than what its rows
@@ -1832,12 +2147,20 @@ func manifestGuards(_ w: WorldState, liveRows: [LayoutRow]? = nil,
     let d = parentPath(layout.manifest) ?? layout.manifest
     let live = liveRows ?? layout.rows
     let liveText = uncommented(liveText ?? (readText(layout.manifest) ?? ""))
+    let taken = takenInputs(w)
+    bad += taken.bad
+    bad += kindBindingGuards(live, liveText)
+    bad += drawingInputs(live).bad
     var seenPaths: [String: String] = [:]
+    var seenRows = Set<String>()
     for r in live {
         let said = r.name ?? "a row with no name"
+        if let name = r.name, !seenRows.insert(name).inserted {
+            bad.append(("\(man):\(r.line)", "\(name): repeated manifest row"))
+        }
         if let role = r.role, let atom = ROLE_ATOM[role],
            liveText.contains("public typealias Kind = " + atom),
-           !liveText.contains("public enum " + atom + ": Role {}") {
+           !declaresRole(liveText, atom) {
             bad.append(("\(man):\(r.line)",
                         "`\(said)` is filed under `\(role)` and this document "
                       + "declares no `\(atom)`: a column is an axis to a declared atom, "
@@ -1867,7 +2190,8 @@ func manifestGuards(_ w: WorldState, liveRows: [LayoutRow]? = nil,
                         "`\(said)` is filed under `seam`, and \(r.path) does not "
                       + "say it is one side of one: a side states a contract or claims "
                       + "to carry one, in its own first lines"))
-        } else if !STATUS_ROLES.contains(where: { $0.0 == r.role }) {
+        } else if !STATUS_ROLES.contains(where: { $0.0 == r.role }),
+                  !(r.kind.map { unsupportedKind($0) } ?? false) {
             bad.append(("\(man):\(r.line)",
                         "`\(said)` is for `\(r.role!)`, which no court here reads. "
                       + "A row gate cannot place is refused, never quietly taken as a "
@@ -1895,7 +2219,8 @@ func manifestGuards(_ w: WorldState, liveRows: [LayoutRow]? = nil,
         // person cannot act on when the row and the folder are both in front
         // of them: a path with a stray character on the end reads as the path
         // it almost is. The looked-for path travels in quotes.
-        let looked = joinPath(d, r.path)
+        let looked = inputPath(r, w, taken) ?? joinPath(d, r.path)
+        if r.source == "theirs" && taken.v2 && taken.paths[r.name ?? ""] == nil { continue }
         if !FileManager.default.fileExists(atPath: looked) {
             bad.append(("\(man):\(r.line)",
                         "the manifest declares \(r.path), and no such file exists at "
@@ -1911,8 +2236,7 @@ func manifestGuards(_ w: WorldState, liveRows: [LayoutRow]? = nil,
         // the checkout's: on two platforms this guard fired over a world that
         // holds here, and a reader that spells a text its own way is how that
         // happens.
-        let p = joinPath(d, r.path)
-        guard let whole = readText(p) else { continue }
+        guard let p = inputPath(r, w, taken), let whole = readText(p) else { continue }
         let head = whole.prefix(1200).components(separatedBy: "\n").prefix(8)
         var want: String? = nil
         var saw = false
@@ -1957,7 +2281,7 @@ func findAll(_ pattern: String, _ text: String, lines: Bool = false) -> [String]
 func oneStream(_ w: WorldState, _ named: [(String, String)]) -> [(String, String)] {
     // one namespace is one stream, and this is the one place that says which:
     // a forms file is its own stream, and the layout's court is the guards
-    let forms = Set((w.layout?.rows ?? []).filter { $0.role == "forms" }.map { $0.path })
+    let forms = Set((w.layout?.rows ?? []).filter { $0.role == "forms" || $0.role == "carried" }.map { $0.path })
     var apart = Set<String>()
     if let l = w.layout { apart.insert(absPath(l.manifest)) }
     if let pp = policyPathOf(w) { apart.insert(absPath(pp)) }
@@ -2020,6 +2344,11 @@ func entryGuardsOver(_ sources: [(String, String)]) -> [(address: String, claim:
             }
             let bare = code.trimmingCharacters(in: .whitespaces)
             if bare.isEmpty { continue }
+            // A roster contains metatypes without generic arguments. The
+            // company court resolves those names; they are complete entries.
+            if !matches("^(?:[A-Z]\\w*\\.self\\s*;?\\s*)+$", bare).isEmpty && openAt == nil {
+                continue
+            }
             let closes = !matches(">\\s*\\.self\\s*;?", bare).isEmpty
             let opens = matchAt(bare, "[A-Z]\\w*\\s*<") != nil
             if opens {
@@ -2079,14 +2408,16 @@ func lawNotes(_ texts: [String]) -> [String: String] {
     return out
 }
 
-func plainly(_ claim: String, _ notes: [String: String]) -> String {
-    // the where court's sentence, said the way the plain court says its own:
-    // the certificate, the two sides, and the law in the law's own words
-    guard let m = matchAt(claim, "'(\\w+)[^']*' requires the types '[^']*' \\(aka '([^']+)'\\) "
-                               + "and '[^']*' \\(aka '([^']+)'\\) be equivalent(?: \\[(\\w+)\\])?")
+func plainly(_ claim: String, _ notes: [String: String], distinguishing: Bool = false) -> String {
+    // Keep the symbolic equality as well as its resolved pair: two different
+    // requirements can resolve to the same atoms at the same application.
+    guard let m = matchAt(claim, "'(\\w+)[^']*' requires the types '([^']*)' \\(aka '([^']+)'\\) "
+                               + "and '([^']*)' \\(aka '([^']+)'\\) be equivalent(?: \\[(\\w+)\\])?")
     else { return claim }
-    let said = notes[m[4]]
-    return "\(m[1]) · \(m[2]) against \(m[3])" + (said.map { ": " + $0 } ?? "")
+    let said = notes[m[6]]
+    return "\(m[1]) · \(m[3]) against \(m[5])"
+        + (distinguishing ? " · \(m[2]) == \(m[4])" : "")
+        + (said.map { ": " + $0 } ?? "")
 }
 
 func presentedOver(_ w: WorldState, _ shelfName: String)
@@ -2095,17 +2426,25 @@ func presentedOver(_ w: WorldState, _ shelfName: String)
     // place, and only this world's names; two declarations inside one layer
     // are refused with both addresses rather than settled by list order
     let shipped = STDLIB_TEXTS[shelfName] ?? ""
+    if let root = layoutDir(w), let data = FileManager.default.contents(atPath:
+        (root as NSString).appendingPathComponent(".gate/forms-definitions.json")),
+        let spec = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        spec["shelf_overrides"] as? Bool == false {
+        // A pinned dictionary world supplies its own definitions. A same-named
+        // colour there is not a restatement of the bench's own palette.
+        return (shipped, [], [])
+    }
     let rows = w.layout?.rows ?? []
     if rows.isEmpty { return (shipped, [], []) }
     let base = layoutDir(w) ?? "."
     var mine: [(name: String, path: String, line: Int, raw: String)] = []
     var clash: [(address: String, claim: String)] = []
+    let taken = takenInputs(w)
     for r in rows where r.role == "forms" {
         if SHIPPED_SET.contains(absPath((base as NSString).appendingPathComponent(r.path))) {
             continue
         }
-        let fp = (base as NSString).appendingPathComponent(r.path)
-        guard FileManager.default.fileExists(atPath: fp), let body = readText(fp) else { continue }
+        guard let fp = inputPath(r, w, taken), let body = readText(fp) else { continue }
         var depth = 0
         for (i0, line) in body.components(separatedBy: "\n").enumerated() {
             let i = i0 + 1
@@ -2179,60 +2518,1045 @@ func whereRefused(_ out: String) -> [(cert: String?, claim: String)] {
     var found: [(String?, String)] = []
     for line in out.components(separatedBy: "\n") {
         let l = line.trimmingCharacters(in: .whitespaces)
-        guard l.hasPrefix("✗") else { continue }
+        // a world with no gate is a world with nothing to judge, not a refusal
+        guard l.hasPrefix("✗"), l != WhereAnswer.nothingAsked else { continue }
         let claim = String(l.dropFirst()).trimmingCharacters(in: .whitespaces)
         found.append((matchAt(claim, "'(\\w+)").map { $0[1] }, claim))
     }
     return found
 }
 
+// Show symbolic sides only when different requirements would otherwise wear
+// the same sentence. A single refusal keeps the law's own words.
+func plainWhereRefusals(_ out: String, _ notes: [String: String])
+    -> [(cert: String?, claim: String, presentation: String)] {
+    let readings = whereRefused(out).map { ($0, plainly($0.claim, notes)) }
+    var originals: [String: Set<String>] = [:]
+    for (raw, plain) in readings { originals[plain, default: []].insert(raw.claim) }
+    return readings.map { raw, plain in
+        (raw.cert, raw.claim, (originals[plain]?.count ?? 0) > 1
+            ? plainly(raw.claim, notes, distinguishing: true) : plain)
+    }
+}
+
 // `live` overrides what is on disk for the files it names, so the bench can
 // hold a forms row to the same promise as every other file it opens: judged as
 // you type. Reading the saved copy while somebody edits an unsaved one shows
 // green over a lie.
-func formsGuards(_ w: WorldState, _ size: inout [String: Int],
-                 live: [String: String] = [:]) -> [(address: String, claim: String)] {
-    // the forms rows of one layout are one world laid out in files: glued and
-    // judged together by the where court, with the shelf worlds an operator
-    // overrides judged each as its own stream
-    guard let layout = w.layout else { return [] }
-    let d = (layout.manifest as NSString).deletingLastPathComponent
-    let rows = layout.rows.filter { $0.role == "forms"
-        && FileManager.default.fileExists(atPath: (d as NSString).appendingPathComponent($0.path)) }
-    if rows.isEmpty { return [] }
+struct FormResidue {
+    let id: String
+    let address: String
+    let reason: String
+}
+
+func formsOutcome(_ refused: Int, _ residue: [FormResidue], _ checked: Int) -> String {
+    if refused != 0 { return "refused" }
+    if !residue.isEmpty { return checked == 0 ? "unsupported" : "partial" }
+    return checked == 0 ? "empty" : "holds"
+}
+
+func formsChecked(_ size: [String: Int]) -> Int {
+    (size["equalities"] ?? 0) + (size["memberships"] ?? 0) + (size["readings"] ?? 0)
+}
+
+let EMPTY_FORMS_REASON = "no declared applications"
+
+func outcomeLabel(_ verdict: String) -> String {
+    verdict == "empty" ? "empty · " + EMPTY_FORMS_REASON : verdict
+}
+
+// A published world's compiler and its judge may stand at different pins.
+// These are explicit input files, not additional claims or a new file role.
+// The page builder lays this record beside the world; a changed or missing
+// definition is a refusal to read the record, never a fallback to our pin.
+// ── GRAMMAR CONTEXTS BEGIN: the scope/context slice; Kind remains the reader door.
+
+// Language supplies names and inputs, never a reader. Kind still chooses the
+// court. This is the full context path; the pre-Language checkpoint stays at
+// its existing door until its owner supplies complete data (migration 4a).
+struct GrammarUnit {
+    let row: String
+    let path: String
+    let sourcePath: String
+    let identity: String
+    let namespace: String
+    let text: String
+    let sha256: String
+    let mapSHA256: String
+    let scope: String
+    var courtSource: [String: Any] = [:]
+    var countQuestions: [[String: String]] = []
+}
+struct GrammarContext {
+    let name: String
+    let namespace: String
+    let rows: [LayoutRow]
+    let units: [GrammarUnit]
+    let definitions: [String]
+    var courtContext: [String: Any]? = nil
+    var courtReceipts: [[String: Any]] = []
+    var permittedImports: [String] = []
+}
+final class GrammarCoverage {
+    var sources = Set<String>()
+    var unchecked = Set<String>()
+    var reports: [StatusJSON] = []
+    var exclusions: [StatusJSON] {
+        unchecked.sorted().map { .object([("address", .text($0)), ("reason", .text("excluded from the court reading"))]) }
+    }
+}
+struct GrammarContexts {
+    var active = false
+    var recordSHA256 = ""
+    var contexts: [GrammarContext] = []
     var bad: [(address: String, claim: String)] = []
-    func bodyOf(_ r: LayoutRow) -> String {
-        if let typed = live[r.path] { return typed }
-        return readText((d as NSString).appendingPathComponent(r.path)) ?? ""
+    var unsupported: [FormResidue] = []
+    var receipt: [String: Any] {
+        ["format": "gate-grammar-contexts/1", "active": active, "record_sha256": recordSHA256,
+         "law": "vi-grammar-policy/1", "vi_revision": PinnedGrammarLaw.revision,
+         "policy_sha256": PinnedGrammarLaw.digest,
+         "policy": String(decoding: PinnedGrammarLaw.bytes, as: UTF8.self),
+         "refusals": bad.map { ["address": $0.address, "claim": $0.claim] },
+         "unsupported": unsupported.map { ["address": $0.address, "reason": $0.reason] },
+         "contexts": contexts.map { context -> [String: Any] in
+            ["language": context.name, "namespace": context.namespace,
+             "court": context.courtContext as Any? ?? NSNull(),
+             "requests": grammarCourtRequests(context), "receipts": context.courtReceipts,
+             "imports": context.permittedImports,
+             "inputs": context.units.map { unit -> [String: Any] in
+                ["row": unit.row, "path": unit.path, "source_path": unit.sourcePath,
+                 "identity": unit.identity, "namespace": unit.namespace,
+                 "source_sha256": unit.sha256, "scope_map_sha256": unit.mapSHA256,
+                 "scope": unit.scope]
+             }]
+         }]
     }
-    var streams: [(shelf: String?, text: String, mine: [(String, String)])] = []
-    for shelfName in SHELF_ORDER {
-        let (text, placed, clash) = presentedOver(w, shelfName)
-        bad += clash
-        if !placed.isEmpty { streams.append((shelfName, text, placed)) }
+}
+
+// Keep only the latest plan. Every lookup resolves the pins again and hashes
+// effective delivered row bytes, the record and manifest, plus undeclared
+// buffers. A saved plan is a parsing result for those bytes, never an old green.
+var GRAMMAR_CONTEXT_PLAN: (key: String, value: GrammarContexts)? = nil
+func grammarContextKey(_ w: WorldState, live: [String: String], resolved: TakenResolution) -> String? {
+    guard resolved.bad.isEmpty, let root = layoutDir(w), let layout = w.layout,
+          layout.rows.contains(where: { $0.language != nil }),
+          let manifest = FileManager.default.contents(atPath: layout.manifest),
+          let record = FileManager.default.contents(atPath: joinPath(root, ".gate/forms-definitions.json")) else { return nil }
+    let rows: [[String: String]] = layout.rows.map { row in
+        let path = row.source == "theirs" ? row.name.flatMap { resolved.paths[$0] } : joinPath(root, row.path)
+        let bytes = live[row.path].map { Data($0.utf8) } ?? path.flatMap(inputBytes)
+        return ["row": row.name ?? "", "path": row.path, "input": bytes.map(sha256Hex) ?? "missing",
+            "source": row.source, "role": row.role ?? "", "kind": row.kind ?? "", "language": row.language ?? "",
+            "from": row.from ?? "", "written": row.written ?? "", "opens": row.opens ?? "", "line": String(row.line),
+            "drawingInputs": row.drawingInputs.joined(separator: "\u{0}")]
+
     }
-    streams.append((nil, rows.map(bodyOf).joined(separator: "\n"), []))
-    var whereMap: [String: String] = [:]
-    for r in rows {
-        for (i0, line) in bodyOf(r).components(separatedBy: "\n").enumerated() {
-            if let m = matchAt(line.trimmingCharacters(in: .whitespaces),
-                               "public (?:typealias|enum|protocol) (\\w+)"),
-               whereMap[m[1]] == nil {
-                whereMap[m[1]] = "\(r.path):\(i0 + 1)"
+    // Declared overlays are already represented by their effective row bytes.
+    // Opening those same bytes in the editor is not a different parser input.
+    // Keep undeclared overlays distinct: they have no row digest above.
+    let declared = Set(layout.rows.map { $0.path })
+    let unassigned = live.filter { !declared.contains($0.key) }
+    return sha256Hex(publicationJSON(["root": root, "manifest": sha256Hex(manifest), "record": sha256Hex(record),
+        "rows": rows, "live": unassigned, "law": PinnedGrammarLaw.digest, "reader": judgeFrom() ?? ""] as [String: Any]))
+}
+func grammarContexts(_ w: WorldState, live: [String: String] = [:],
+                     resolved supplied: TakenResolution? = nil) -> GrammarContexts {
+    let resolved = supplied ?? takenInputs(w)
+    let key = grammarContextKey(w, live: live, resolved: resolved)
+    if let key, let cached = GRAMMAR_CONTEXT_PLAN, cached.key == key { return cached.value }
+    var result = readGrammarContexts(w, live: live, resolved: resolved)
+    // A ReadPlan has the same bytes across processes and checkout locations,
+    // including its negative replies; dictionary iteration is not provenance.
+    result.bad.sort { ($0.address, $0.claim) < ($1.address, $1.claim) }
+    result.unsupported.sort { ($0.address, $0.id, $0.reason) < ($1.address, $1.id, $1.reason) }
+    if let key, key == grammarContextKey(w, live: live, resolved: resolved) {
+        GRAMMAR_CONTEXT_PLAN = (key, result)
+    }
+    return result
+}
+func readGrammarContexts(_ w: WorldState, live: [String: String],
+                         resolved supplied: TakenResolution?) -> GrammarContexts {
+    var result = GrammarContexts()
+    guard let root = layoutDir(w), let layout = w.layout else { return result }
+    let assigned = layout.rows.filter { $0.language != nil }
+    let recordPath = joinPath(root, ".gate/forms-definitions.json")
+    let originalRecord = FileManager.default.contents(atPath: recordPath)
+    result.recordSHA256 = originalRecord.map(sha256Hex) ?? ""
+    let originalSpec = originalRecord.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    // A declared but malformed context is never the null-map checkpoint.
+    if let spec = originalSpec, spec["format"] as? Int == 2, let raw = spec["languages"] {
+        guard let all = raw as? [String: [String: Any]] else {
+            result.active = true
+            result.bad.append((".gate/forms-definitions.json:1", "languages must be a context object"))
+            return result
+        }
+        let fields: Set<String> = ["definitions", "namespace", "imports", "scope_map", "module", "intrinsics", "receipts"]
+        for (name, context) in all {
+            if let extra = Set(context.keys).subtracting(fields).sorted().first {
+                result.bad.append((".gate/forms-definitions.json:1", "Language '" + name + "' has unsupported field '" + extra + "'; Kind chooses the reader"))
+            }
+            if (context["definitions"] != nil && !(context["definitions"] is [String]))
+                || (context["namespace"] != nil && !(context["namespace"] is String))
+                || (context["imports"] != nil && !(context["imports"] is [[String: Any]])) {
+                result.bad.append((".gate/forms-definitions.json:1", "Language '" + name + "' has malformed context data"))
+            }
+        }
+        if !result.bad.isEmpty { result.active = true; return result }
+    }
+    if assigned.isEmpty {
+        if let bytes = FileManager.default.contents(atPath: recordPath),
+           let record = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+           let languages = record["languages"] as? [String: [String: Any]],
+           languages.values.contains(where: { $0["scope_map"] != nil && !($0["scope_map"] is NSNull) }) {
+            result.active = true
+            result.bad.append(("gate.manifest.swift:1", "a prepared scope context requires an explicit Language axis"))
+        }
+        return result
+    }
+    result.active = true
+    func bad(_ address: String, _ reason: String) { result.bad.append((address, reason)) }
+    for row in layout.rows where (row.role == "forms" || row.role == "world") && row.language == nil {
+        bad("gate.manifest.swift:\(row.line)", "\(row.name ?? row.path): a prepared context requires an explicit Language for every judged source")
+    }
+    guard let bytes = FileManager.default.contents(atPath: recordPath),
+          let record = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+          record["format"] as? Int == 2,
+          let languages = record["languages"] as? [String: [String: Any]],
+          let inputs = record["files"] as? [[String: String]] else {
+        bad(".gate/forms-definitions.json:1", "Language requires the complete format 2 context record")
+        return result
+    }
+    let resolved = supplied ?? takenInputs(w)
+    result.bad += resolved.bad
+    if originalRecord != FileManager.default.contents(atPath: recordPath) {
+        result.bad.append((".gate/forms-definitions.json:1", "the input record changed while resolving Language; read it again"))
+    }
+    if !result.bad.isEmpty { return result }
+    let rowsByName = Dictionary(layout.rows.compactMap { row in row.name.map { ($0, row) } },
+                                uniquingKeysWith: { a, _ in a })
+    let inputsByName = Dictionary(inputs.compactMap { input in input["row"].map { ($0, input) } },
+                                  uniquingKeysWith: { a, _ in a })
+    let spots = RecordSpots(String(decoding: bytes, as: UTF8.self))
+    var mapsForSource: [String: String] = [:]
+    // namespace + source identity prevents the same imported declaration from
+    // conflicting with itself while preserving different origins and addresses.
+    var symbols: [String: (identity: String, address: String)] = [:]
+    var sourceNames: [String: Set<String>] = [:]
+    let claimed = Set(assigned.compactMap(\.language))
+    for name in claimed.sorted() {
+        let rows = assigned.filter { $0.language == name }
+        let at = "gate.manifest.swift:\(rows.first?.line ?? 1)"
+        guard let context = languages[name] else { bad(at, "Language '" + name + "' has no context"); continue }
+        let contextV2 = context["module"] != nil || context["intrinsics"] != nil
+        let allowed: Set<String> = contextV2
+            ? ["definitions", "namespace", "imports", "scope_map", "module", "intrinsics"]
+            : ["definitions", "namespace", "imports", "scope_map"]
+        let accepted = contextV2 ? allowed.union(["receipts"]) : allowed
+        if let extra = Set(context.keys).subtracting(accepted).sorted().first {
+            bad(".gate/forms-definitions.json:1", "Language '" + name + "' has unsupported field '" + extra + "'; Kind chooses the reader")
+            continue
+        }
+        guard Set(context.keys).subtracting(contextV2 ? ["receipts"] : []) == allowed,
+              let namespace = context["namespace"] as? String, !namespace.isEmpty,
+              let definitions = context["definitions"] as? [String],
+              let imports = context["imports"] as? [[String: Any]],
+              let mapName = context["scope_map"] as? String,
+              let mapRow = rowsByName[mapName], mapRow.source == "theirs", mapRow.role == "carried",
+              let mapPath = resolved.paths[mapName], let mapBytes = FileManager.default.contents(atPath: mapPath),
+              let mapText = String(data: mapBytes, encoding: .utf8) else {
+            bad(at, "Language '" + name + "' needs namespace, definitions, imports and a pinned CarriedFile scope_map")
+            continue
+        }
+        let ownerModule = context["module"] as? String ?? namespace
+        let contextPath = "/languages/" + name
+        // Stable field addresses: appending a receipt does not change its own
+        // question. The containing record still carries its ordinary byte hash.
+        func courtAt(_ pointer: String) -> String { ".gate/forms-definitions.json#" + pointer }
+        let intrinsic = context["intrinsics"] as? [[String: Any]] ?? []
+        if contextV2 && (!(context["module"] is String) || ownerModule.isEmpty || !(context["intrinsics"] is [[String: Any]])) {
+            bad(spots.address(contextPath), "Language needs an explicit module and intrinsics"); continue
+        }
+        var intrinsicInputs: [[String: Any]] = []
+        for (index, item) in intrinsic.enumerated() {
+            guard Set(item.keys) == ["namespace", "version", "exports"],
+                  let exports = item["exports"] as? [String] else {
+                bad(spots.address(contextPath + "/intrinsics/\(index)"), "malformed intrinsic declaration"); continue
+            }
+            var carried = item
+            let path = contextPath + "/intrinsics/\(index)"
+            carried["at"] = ["namespace": courtAt(path + "/namespace"),
+                "version": courtAt(path + "/version"),
+                "exports": exports.indices.map { courtAt(path + "/exports/\($0)") }] as [String: Any]
+            intrinsicInputs.append(carried)
+        }
+        let map: GrammarScopeMap
+        do { map = try GrammarScopeMap.read(mapText, scopes: Set(PinnedGrammarLaw.policy.scopes)) }
+        catch { bad(mapRow.path + ":1", String(describing: error)); continue }
+        let mapHash = sha256Hex(mapBytes)
+        guard mapHash == inputsByName[mapName]?["sha256"] else {
+            bad(mapRow.path + ":1", "scope map bytes differ from the resolved pin")
+            continue
+        }
+        var permitted: [String: [String]] = [:], namespaceFor: [String: String] = [:]
+        var moduleFor: [String: String] = [:], importIndex: [String: Int] = [:]
+        var references = definitions
+        for (entryIndex, entry) in imports.enumerated() {
+            guard Set(entry.keys) == ["module", "inputs", "namespace"],
+                  let module = entry["module"] as? String,
+                  module.first.map({ $0.isLetter || $0 == "_" }) == true,
+                  module.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }),
+                  let refs = entry["inputs"] as? [String], !refs.isEmpty,
+                  let importedNS = entry["namespace"] as? String, !importedNS.isEmpty,
+                  permitted[module] == nil else {
+                bad(at, "Language '" + name + "' has an import declaration with missing fields or a repeated module")
+                continue
+            }
+            permitted[module] = refs
+            for ref in refs {
+                if let prior = namespaceFor[ref], prior != importedNS {
+                    bad(at, "input '" + ref + "' is exported into conflicting namespaces '" + prior + "' and '" + importedNS + "'")
+                }
+                if let prior = moduleFor[ref], prior != module {
+                    bad(at, "input '" + ref + "' is exported by conflicting modules")
+                }
+                namespaceFor[ref] = importedNS
+                moduleFor[ref] = module; importIndex[ref] = entryIndex
+                if !references.contains(ref) { references.append(ref) }
+            }
+        }
+        // Attribute names come from the delivered definitions, as in where's
+        // own prepare(). A reader cannot lend a builder merely by spelling it.
+        let lentBuilders = Set(references.flatMap { ref -> Set<String> in
+            guard let path = resolved.paths[ref], let text = readText(path),
+                  let clean = try? WhereJudge.stripComments(text) else { return [] }
+            return WhereJudge.declaredBuilders(clean)
+        })
+        var units: [GrammarUnit] = [], borrowed: [String] = []
+        func carry(_ row: LayoutRow, _ ns: String) {
+            guard let name = row.name else { bad(row.path + ":1", "Language input has no row identity"); return }
+            let path: String, sourcePath: String, identity: String
+            if row.source == "theirs" {
+                guard let input = inputsByName[name], let cached = resolved.paths[name],
+                      let origin = input["source_path"], let repository = input["repository"],
+                      let revision = input["revision"], let digest = input["sha256"] else {
+                    bad(row.path + ":1", "Language input '" + name + "' is not resolved"); return
+                }
+                path = cached; sourcePath = origin
+                identity = repository + "@" + revision + ":" + origin + "#" + digest
+            } else {
+                path = joinPath(root, row.path); sourcePath = row.path
+                identity = "local:" + row.path // identity is relative to this world, not its checkout location
+            }
+            if row.source == "theirs", let typed = live[row.path],
+               inputBytes(path) != Data(typed.utf8) {
+                bad(row.path + ":1", "a taken Language input is read-only at its pin")
+                return
+            }
+            guard let data = (row.source == "mine" ? live[row.path].map({ Data($0.utf8) }) : nil) ?? inputBytes(path),
+                  let text = String(data: data, encoding: .utf8) else {
+                bad(row.path + ":1", "Language source is missing or not UTF-8"); return
+            }
+            if let prior = mapsForSource[identity], prior != mapHash {
+                bad(row.path + ":1", "one source identity has conflicting scope maps at vi " + PinnedGrammarLaw.revision)
+                return
+            }
+            if row.source == "theirs", sha256Hex(data) != inputsByName[name]?["sha256"] {
+                bad(row.path + ":1", "Language source bytes differ from the resolved pin")
+                return
+            }
+            mapsForSource[identity] = mapHash
+            let scope: String
+            do { scope = try map.scope(for: sourcePath) }
+            catch { bad(row.path + ":1", String(describing: error)); return }
+            do {
+                for f in try PinnedGrammarLaw.policy.findings(text, scope: scope) {
+                    bad(row.path + ":\(f.line)", "grammar: \(f.atom) is not granted \(f.scope)/\(f.context)")
+                }
+                let clean = try WhereJudge.stripComments(text, lent: lentBuilders)
+                if !contextV2 {
+                let scopeInfo = WhereJudge.Scope(clean)
+                let header = try NSRegularExpression(pattern: "\\b(?:enum|struct|class|actor|protocol|typealias)\\s+(\\w+)")
+                let nsText = clean as NSString
+                var top: [String: [Int]] = [:]
+                for hit in header.matches(in: clean, range: NSRange(location: 0, length: nsText.length))
+                    where scopeInfo.depth[hit.range.location] == 0 {
+                    top[nsText.substring(with: hit.range(at: 1)), default: []].append(scopeInfo.line[hit.range.location])
+                }
+                sourceNames[identity] = Set(top.keys)
+                for (symbol, lines) in top {
+                    let key = ns + ":" + symbol
+                    let address = row.path + ":\(lines.first ?? 1)"
+                    if lines.count > 1 { bad(address, "namespace '" + ns + "' repeats '" + symbol + "' at lines " + lines.map(String.init).joined(separator: ", ")) }
+                    if let prior = symbols[key], prior.identity != identity {
+                        bad(address, "namespace '" + ns + "' conflicts on '" + symbol + "' with " + prior.address)
+                    } else { symbols[key] = (identity, address) }
+                }
+                }
+                for declaration in try CourtNotation.imports(text, lent: lentBuilders) {
+                    let module = declaration.module, line = declaration.line
+                    if module.first.map({ $0.isLetter || $0 == "_" }) != true
+                        || !module.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) {
+                        result.unsupported.append(FormResidue(id: name, address: row.path + ":\(line)",
+                            reason: "Language import syntax is not supported: " + module))
+                    } else if permitted[module] == nil && !(contextV2 && intrinsicInputs.contains { $0["namespace"] as? String == module }) {
+                        bad(row.path + ":\(line)", "import '" + module + "' is not declared by Language '" + name + "'")
+                    }
+                }
+            } catch {
+                result.unsupported.append(FormResidue(id: name, address: row.path + ":1",
+                    reason: "Language declaration reader: " + String(describing: error)))
+            }
+            var unit = GrammarUnit(row: name, path: row.path, sourcePath: sourcePath, identity: identity,
+                namespace: ns, text: text, sha256: sha256Hex(data), mapSHA256: mapHash, scope: scope)
+            if contextV2 {
+                let rowAt = "gate.manifest.swift:\(row.line)"
+                let inputIndex = inputs.firstIndex { $0["row"] == name }
+                let fileAt = inputIndex.map { "/files/\($0)" }
+                let importedAt = importIndex[name].map { contextPath + "/imports/\($0)" }
+                let declarations = (try? CourtNotation.imports(text, lent: lentBuilders)) ?? []
+                let declaredImports = declarations.map(\.module)
+                let isOwn = rows.contains { $0.name == name && $0.role == "forms" }
+                if isOwn {
+                    do { unit.countQuestions = try CourtNotation.countQuestions(text, path: sourcePath, lent: lentBuilders) }
+                    catch { result.unsupported.append(FormResidue(id: name, address: row.path + ":1", reason: String(describing: error))) }
+                }
+                unit.courtSource = ["input": row.path, "source": sourcePath,
+                    "sha256": unit.sha256, "namespace": ns,
+                    "module": moduleFor[name] ?? ownerModule, "role": isOwn ? "own" : "borrowed",
+                    "imports": declaredImports,
+                    "at": ["input": rowAt, "source": fileAt.map { courtAt($0 + "/source_path") } ?? rowAt,
+                        "sha256": fileAt.map { courtAt($0 + "/sha256") } ?? rowAt,
+                        "namespace": courtAt((importedAt ?? contextPath) + "/namespace"),
+                        "module": courtAt((importedAt ?? contextPath) + "/module"), "role": rowAt,
+                        "imports": declarations.map { sourcePath + ":\($0.line)" }] as [String: Any]]
+            }
+            if !units.contains(where: { contextV2 ? $0.path == unit.path : ($0.identity == identity && $0.namespace == ns) }) { units.append(unit) }
+        }
+        for ref in references {
+            guard let row = rowsByName[ref], row.source == "theirs", let path = resolved.paths[ref] else {
+                bad(at, "Language '" + name + "' has missing definition input '" + ref + "'"); continue
+            }
+            carry(row, namespaceFor[ref] ?? namespace)
+            if !rows.contains(where: { $0.name == ref }), !borrowed.contains(path) { borrowed.append(path) }
+        }
+        for row in rows {
+            guard row.role == "forms" || row.role == "world" || (contextV2 && row.role == "carried") else {
+                bad(row.path + ":1", "Language cannot select a reader for this Kind"); continue
+            }
+            carry(row, namespace)
+        }
+        // A flat court cannot choose between homonymous imported symbols.
+        // Name the unsupported construction rather than collapse namespaces.
+        if !contextV2 {
+        var visible: [String: String] = [:]
+        for unit in units {
+            for symbol in sourceNames[unit.identity] ?? [] {
+                if let prior = visible[symbol], prior != unit.namespace {
+                    result.unsupported.append(FormResidue(id: name, address: unit.path + ":1",
+                        reason: "qualified namespace resolution is not supported for '" + symbol + "' (" + prior + ", " + unit.namespace + ")"))
+                } else { visible[symbol] = unit.namespace }
+            }
+        }
+        }
+        var built = GrammarContext(name: name, namespace: namespace, rows: rows,
+                                   units: units, definitions: borrowed)
+        if contextV2 {
+            built.permittedImports = (Array(permitted.keys) + intrinsicInputs.compactMap { $0["namespace"] as? String }).sorted()
+            built.courtContext = ["schema": "vi.court.context/2",
+                "sources": units.map(\.courtSource), "intrinsics": intrinsicInputs]
+            if let declaredReceipts = context["receipts"] {
+                guard let references = declaredReceipts as? [String], Set(references).count == references.count else {
+                    bad(courtAt(contextPath + "/receipts"), "court receipts must name distinct pinned CarriedFile rows"); continue
+                }
+                var seen = Set<String>()
+                for reference in references {
+                    guard let row = rowsByName[reference], row.source == "theirs", row.kind == "CarriedFile",
+                          let path = resolved.paths[reference], let bytes = inputBytes(path),
+                          sha256Hex(bytes) == inputsByName[reference]?["sha256"],
+                          let document = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any],
+                          Set(document.keys) == ["schema", "receipts"],
+                          document["schema"] as? String == "gate.court.receipts/1",
+                          let receipts = document["receipts"] as? [[String: Any]] else {
+                        bad(courtAt(contextPath + "/receipts"), "court receipt '" + reference + "' is not a verified pinned receipt input"); continue
+                    }
+                    for receipt in receipts {
+                        guard Set(receipt.keys) == ["schema", "request_sha256", "response"],
+                              receipt["schema"] as? String == "gate.court.receipt/1",
+                              let digest = receipt["request_sha256"] as? String,
+                              digest.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil,
+                              seen.insert(digest).inserted,
+                              let response = receipt["response"] as? [String: Any],
+                              Set(response.keys) == ["exit", "stdout", "stderr"],
+                              grammarCourtInteger(response["exit"]) != nil, response["stdout"] is String, response["stderr"] is String else {
+                            bad(row.path + ":1", "court receipt fields are outside the supported form or repeat"); continue
+                        }
+                        var taken = receipt
+                        taken["origin"] = inputsByName[reference] ?? [:]
+                        built.courtReceipts.append(taken)
+                    }
+                }
+            }
+        } else if result.bad.isEmpty { result.unsupported += grammarBindings(built) }
+        result.contexts.append(built)
+    }
+    return result
+}
+
+// Name availability is a context obligation, before nominal equality. The
+// where court may compare an opaque term with itself; that does not supply
+// the declaration an import promised. Bodies remain outside this reading.
+// DocumentReaderV1 reads declarations. The Structure-valued builder body is
+// the drawing interpreter's input, not an application proved by where/count.
+// Keep every source line and the full original bytes outside those bodies.
+// The court's lexer finds braces, so comments/strings cannot close a body.
+func documentDeclarations(_ text: String, lent: Set<String>) throws -> String {
+    let clean = try WhereJudge.stripComments(text, lent: lent).components(separatedBy: "\n")
+    var lines = WhereJudge.sourceLines(text).components(separatedBy: "\n")
+    guard lines.count == clean.count else { throw WhereJudge.Failure.unsupported(["DocumentReader: line map differs"]) }
+    let header = #"^\s*(?:public\s+)?static\s+var\s+body\s*:\s*some\s+Structure(?:\s*&\s*\w+)*\s*\{\s*$"#
+    var i = 0
+    while i < clean.count {
+        if clean[i].range(of: header, options: .regularExpression) == nil { i += 1; continue }
+        let first = i
+        var depth = 1
+        i += 1
+        while i < clean.count, depth > 0 {
+            for c in clean[i] { if c == "{" { depth += 1 }; if c == "}" { depth -= 1 } }
+            if depth > 0 { lines[i] = "" }
+            else if clean[i].trimmingCharacters(in: .whitespaces) != "}" {
+                throw WhereJudge.Failure.unsupported(["cannot read line \(i + 1): DocumentReader needs a separate body closing line"])
+            }
+            i += 1
+        }
+        if depth != 0 { throw WhereJudge.Failure.unsupported(["cannot read line \(first + 1): unclosed document body"]) }
+    }
+    return lines.joined(separator: "\n")
+}
+
+func grammarBindings(_ context: GrammarContext) -> [FormResidue] {
+    guard context.rows.contains(where: { $0.role == "forms" }) else { return [] }
+    let lentBuilders = Set(context.units.flatMap { unit -> Set<String> in
+        guard let clean = try? WhereJudge.stripComments(unit.text) else { return [] }
+        return WhereJudge.declaredBuilders(clean)
+    })
+    var parsed: [(GrammarUnit, WhereJudge.World)] = []
+    for unit in context.units {
+        do {
+            let document = context.rows.contains { $0.path == unit.path && $0.kind == "DocumentFile" }
+            let text = try document ? documentDeclarations(unit.text, lent: lentBuilders) : unit.text
+            parsed.append((unit, try WhereJudge.read(text, lent: lentBuilders)))
+        }
+        catch { return [FormResidue(id: unit.row, address: unit.path + ":1",
+            reason: "Language declaration reader: " + String(describing: error))] }
+    }
+    let visible = Set(parsed.flatMap { $0.1.fileTypes })
+    var parents: [String: [String]] = [:], axes: [String: Set<String>] = [:]
+    for (_, world) in parsed {
+        for (name, values) in world.protocolParents { parents[name] = values }
+        for (name, values) in world.protocolAxes { axes[name] = values }
+    }
+    func inherited(_ name: String, _ seen: Set<String> = []) -> Set<String> {
+        if seen.contains(name) { return [] }
+        return (axes[name] ?? []).union((parents[name] ?? []).reduce(into: Set<String>()) {
+            $0.formUnion(inherited($1, seen.union([name])))
+        })
+    }
+    var out: [FormResidue] = [], recorded = Set<String>()
+    for (unit, world) in parsed {
+        if context.rows.contains(where: { $0.path == unit.path && $0.role == "world" })
+            && !context.rows.contains(where: { $0.path == unit.path && $0.role == "forms" }) { continue }
+        func missing(_ name: String) {
+            let key = unit.path + ":" + name
+            guard recorded.insert(key).inserted else { return }
+            let line = matchesAt("\\b" + NSRegularExpression.escapedPattern(for: name) + "\\b", world.clean).first?.1 ?? 1
+            out.append(FormResidue(id: name, address: unit.path + ":\(line)",
+                reason: "Language '" + context.name + "' has no declared definition for '" + name + "' in its inputs"))
+        }
+        func walk(_ expression: DefinitionReduction.Expression, _ bound: Set<String>) {
+            switch expression {
+            case let .application(name, args):
+                // Never is the existing reader's intrinsic empty floor. Self
+                // and parameters are supplied only by their declaration.
+                if !visible.contains(name) && !bound.contains(name) && name != "Never" { missing(name) }
+                for arg in args { walk(arg, bound) }
+            case let .field(owner, _): walk(owner, bound)
+            }
+        }
+        func term(_ raw: String, _ bound: Set<String> = []) {
+            do { walk(try DefinitionReduction.parse(raw), bound) }
+            catch {
+                let key = unit.path + ":term:" + raw
+                if recorded.insert(key).inserted {
+                    out.append(FormResidue(id: unit.row, address: unit.path + ":1",
+                        reason: "Language type expression is not supported: " + String(describing: error)))
+                }
+            }
+        }
+        for (_, rule) in world.aliases { term(rule.body, Set(rule.parameters)) }
+        for (_, declaration) in world.conformers {
+            let bound = Set(declaration.parameters + Array(declaration.table.keys) + ["Self"])
+            for name in declaration.protocols { term(name) }
+            for raw in declaration.table.values { term(raw, bound) }
+        }
+        for (name, values) in world.protocolParents { for parent in values { term(parent, inherited(name).union(["Self"])) } }
+        for (name, gate) in world.gatedProtocols {
+            let bound = inherited(name).union(["Self"])
+            for (left, right) in gate.equalities + gate.memberships { term(left, bound); term(right, bound) }
+        }
+        for gate in world.gates {
+            let bound = Set(world.parameters[gate.head] ?? []).union(inherited(gate.head)).union(["Self"])
+            term(gate.head); term(gate.proto)
+            for (left, right) in gate.equalities + gate.memberships { term(left, bound); term(right, bound) }
+        }
+        for raw in world.uses { term(raw) }
+    }
+    return out
+}
+
+// One request names the original files and the owner's complete context. This
+// value is also the browser transport; source text is never joined or masked.
+func grammarCourtRequest(_ context: GrammarContext, question: String,
+                         count: (predicate: String, encoding: String, sigma: String)? = nil) -> [String: Any]? {
+    guard let declared = context.courtContext else { return nil }
+    let contextFile = ".gate/court/" + context.name + ".json"
+    let bytes = (try? JSONSerialization.data(withJSONObject: declared,
+        options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
+    let documents = context.rows.filter { $0.kind == "DocumentFile" }.map(\.path).sorted()
+    var arguments = [question] + context.units.map(\.path).sorted() + ["--context", contextFile, "--report"]
+    for path in documents { arguments += ["--document", path] }
+    if let q = count { arguments += ["--predicate", q.predicate, "--encoding", q.encoding, "--sigma", q.sigma] }
+    let files = context.units.sorted { $0.path < $1.path }.map { ["name": $0.path, "text": $0.text] }
+        + [["name": contextFile, "text": String(decoding: bytes, as: UTF8.self)]]
+    return ["arguments": arguments, "files": files,
+        "reader": ["revision": COURT_PIN_BUILT_IN.trimmingCharacters(in: .whitespacesAndNewlines),
+                   "response": "vi.court.sources/1", "grammar_revision": PinnedGrammarLaw.revision,
+                   "grammar_sha256": PinnedGrammarLaw.digest],
+        "scope": context.units.sorted { $0.path < $1.path }.map { ["path": $0.path, "map_sha256": $0.mapSHA256, "scope": $0.scope,
+                                       "identity": $0.identity] }]
+}
+
+func grammarCourtRequests(_ context: GrammarContext) -> [[String: Any]] {
+    guard context.courtContext != nil else { return [] }
+    let own = context.rows.filter { $0.role == "forms" }
+    var requests: [[String: Any]] = []
+    if !own.isEmpty { requests.append(grammarCourtRequest(context, question: "where")!) }
+    var questions = Set<String>()
+    for unit in context.units where own.contains(where: { $0.path == unit.path }) {
+        for q in unit.countQuestions {
+            if let p = q["predicate"], let e = q["encoding"], let s = q["sigma"], questions.insert([p, e, s].joined(separator: "\u{0}")).inserted {
+                requests.append(grammarCourtRequest(context, question: "count", count: (p, e, s))!)
             }
         }
     }
+    return requests
+}
+
+func grammarCourtAnswer(_ request: [String: Any]) -> CourtSourcesReport.Answer {
+    guard let arguments = request["arguments"] as? [String], let question = arguments.first,
+          let files = request["files"] as? [[String: String]] else {
+        return CourtSourcesReport.Answer(exit: 2, stdout: Data(), stderr: Data("court request is outside the supported form\n".utf8))
+    }
+    let texts = Dictionary(files.compactMap { f in f["name"].flatMap { name in f["text"].map { (name, $0) } } },
+                           uniquingKeysWith: { first, _ in first })
+    return CourtSourcesReport.answer(Array(arguments.dropFirst()), question: question, load: { path in
+        guard let text = texts[path] else { throw WhereJudge.Failure.input(["missing input '\(path)'"]) }
+        return text
+    })
+}
+
+func grammarCourtRequestHash(_ request: [String: Any]) -> String {
+    let bytes = (try? JSONSerialization.data(withJSONObject: request,
+        options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
+    return sha256Hex(bytes)
+}
+
+// JSON booleans bridge through NSNumber too; they are not checked counts.
+func jsonBoolean(_ number: NSNumber) -> Bool {
+    #if canImport(CoreFoundation)
+    return CFGetTypeID(number) == CFBooleanGetTypeID()
+    #else
+    // Foundation without the CoreFoundation module still types a boolean as `c`;
+    // a parsed JSON integer is a long long or a double, never a char.
+    return String(cString: number.objCType) == "c"
+    #endif
+}
+
+func grammarCourtInteger(_ value: Any?) -> Int? {
+    guard let number = value as? NSNumber, !jsonBoolean(number),
+          let integer = value as? Int, integer >= -9_007_199_254_740_991, integer <= 9_007_199_254_740_991 else { return nil }
+    return integer
+}
+
+func grammarBoundAnswer(_ request: [String: Any], _ answer: CourtSourcesReport.Answer) -> Bool {
+    guard answer.stderr.isEmpty,
+          let arguments = request["arguments"] as? [String], let question = arguments.first,
+          let files = request["files"] as? [[String: String]],
+          let report = (try? JSONSerialization.jsonObject(with: answer.stdout)) as? [String: Any],
+          Set(report.keys) == ["schema", "question", "inputs", "outcome", "results", "diagnostics"],
+          report["schema"] as? String == "vi.court.sources/1", report["question"] as? String == question,
+          let outcome = report["outcome"] as? String,
+          ["holds", "empty", "refused", "not-established", "unsupported"].contains(outcome),
+          let diagnostics = report["diagnostics"] as? [String],
+          let inputs = report["inputs"] as? [[String: String]],
+          let results = report["results"] as? [[String: Any]],
+          let at = arguments.firstIndex(of: "--context"), at + 1 < arguments.count,
+          let contextText = files.first(where: { $0["name"] == arguments[at + 1] })?["text"],
+          let context = (try? JSONSerialization.jsonObject(with: Data(contextText.utf8))) as? [String: Any],
+          let sources = context["sources"] as? [[String: Any]] else { return false }
+    let wantedInputs = files.map { ["path": $0["name"] ?? "", "sha256": sha256Hex(Data(($0["text"] ?? "").utf8))] }
+        .sorted { $0["path"]! < $1["path"]! }
+    guard inputs == wantedInputs,
+          answer.exit == (outcome == "holds" ? 0 : (["refused", "not-established"].contains(outcome) ? 1 : 2)) else { return false }
+    if results.isEmpty && !diagnostics.isEmpty { return outcome == "unsupported" }
+    let selected = sources.filter { question == "count" || $0["role"] as? String == "own" }
+    let paths = selected.compactMap { $0["input"] as? String }.sorted()
+    guard results.compactMap({ $0["path"] as? String }) == paths else { return false }
+    var total = 0
+    for row in results {
+        guard Set(row.keys) == ["path", "source", "outcome", "equalities", "memberships", "readings", "unchecked", "diagnostics"],
+              let path = row["path"] as? String,
+              row["source"] as? String == selected.first(where: { $0["input"] as? String == path })?["source"] as? String,
+              let state = row["outcome"] as? String,
+              ["holds", "empty", "refused", "not-established", "unsupported"].contains(state),
+              row["unchecked"] is [String], row["diagnostics"] is [String] else { return false }
+        var checked = 0
+        for key in ["equalities", "memberships", "readings"] {
+            guard let count = grammarCourtInteger(row[key]), count >= 0 else { return false }
+            let sum = checked.addingReportingOverflow(count)
+            guard !sum.overflow else { return false }
+            checked = sum.partialValue
+        }
+        let sum = total.addingReportingOverflow(checked)
+        guard !sum.overflow, sum.partialValue <= 9_007_199_254_740_991 else { return false }
+        total = sum.partialValue
+        if (state == "holds" && checked == 0) || (state == "empty" && checked != 0) { return false }
+        if ["refused", "not-established", "unsupported"].contains(state), (row["diagnostics"] as? [String])?.isEmpty != false { return false }
+    }
+    let states = results.compactMap { $0["outcome"] as? String }
+    let aggregate = ["unsupported", "refused", "not-established", "holds"].first(where: { states.contains($0) }) ?? "empty"
+    return aggregate == outcome && diagnostics.isEmpty
+}
+
+var GRAMMAR_COURT_ANSWERS: [String: CourtSourcesReport.Answer] = [:]
+func grammarRecordedAnswer(_ request: [String: Any], receipts: [[String: Any]]) -> CourtSourcesReport.Answer {
+    let hash = grammarCourtRequestHash(request)
+    if let receipt = receipts.first(where: { $0["request_sha256"] as? String == hash }),
+       let response = receipt["response"] as? [String: Any],
+       let integer = grammarCourtInteger(response["exit"]), let code = Int32(exactly: integer), let stdout = response["stdout"] as? String,
+       let stderr = response["stderr"] as? String {
+        let answer = CourtSourcesReport.Answer(exit: code, stdout: Data(stdout.utf8), stderr: Data(stderr.utf8))
+        if grammarBoundAnswer(request, answer) {
+            return answer
+        }
+        return CourtSourcesReport.Answer(exit: 2, stdout: Data(), stderr: Data("the declared court receipt does not cover the stated inputs and hashes\n".utf8))
+    }
+    if let cached = GRAMMAR_COURT_ANSWERS[hash] { return cached }
+    let answer = grammarCourtAnswer(request)
+    // This process cache holds the complete request hash, never a path, label,
+    // or a previous green state. Changed bytes ask the owner again.
+    GRAMMAR_COURT_ANSWERS[hash] = answer
+    return answer
+}
+
+func grammarCourtGuards(_ context: GrammarContext, _ size: inout [String: Int],
+                        unsupported: inout [FormResidue], coverage: GrammarCoverage? = nil) -> [(address: String, claim: String)] {
+    let own = context.rows.filter { $0.role == "forms" }
+    guard !own.isEmpty else { return [] } // CarriedFile does not acquire a court through Language.
+    coverage?.sources.formUnion(own.map(\.path))
+    let requests = grammarCourtRequests(context)
+    var bad: [(address: String, claim: String)] = []
+    for request in requests {
+        let answer = grammarRecordedAnswer(request, receipts: context.courtReceipts)
+        guard let report = (try? JSONSerialization.jsonObject(with: answer.stdout)) as? [String: Any],
+              report["schema"] as? String == "vi.court.sources/1",
+              let results = report["results"] as? [[String: Any]] else {
+            unsupported.append(FormResidue(id: context.name, address: own[0].path + ":1", reason: answer.stderr.isEmpty ? "court returned no source coverage" : String(decoding: answer.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)))
+            continue
+        }
+        for reason in report["diagnostics"] as? [String] ?? [] {
+            unsupported.append(FormResidue(id: context.name, address: own[0].path + ":1", reason: reason))
+        }
+        let question = (request["arguments"] as? [String])?.first
+        let expected = question == "where" ? Set(own.map(\.path)) : Set(context.units.map(\.path))
+        let actual = results.compactMap { $0["path"] as? String }
+        if (report["diagnostics"] as? [String] ?? []).isEmpty && (Set(actual) != expected || actual.count != expected.count) {
+            unsupported.append(FormResidue(id: context.name, address: own[0].path + ":1", reason: "court source coverage differs from the declared request"))
+            continue
+        }
+        coverage?.reports.append(.raw(String(decoding: answer.stdout, as: UTF8.self)))
+        for row in results {
+            coverage?.unchecked.formUnion(row["unchecked"] as? [String] ?? [])
+            let path = row["path"] as? String ?? own[0].path
+            let outcome = row["outcome"] as? String ?? "unsupported"
+            for key in ["equalities", "memberships", "readings"] { size[key, default: 0] += row[key] as? Int ?? 0 }
+            for reason in row["diagnostics"] as? [String] ?? [] {
+                if outcome == "unsupported" {
+                    unsupported.append(FormResidue(id: path, address: path + ":1", reason: reason))
+                } else if outcome == "refused" || outcome == "not-established" {
+                    bad.append((path + ":1", reason))
+                }
+            }
+        }
+    }
+    return bad
+}
+
+func grammarContextGuards(_ w: WorldState, _ size: inout [String: Int],
+                          unsupported: inout [FormResidue], live: [String: String],
+                          contexts: GrammarContexts? = nil, coverage: GrammarCoverage? = nil)
+    -> [(address: String, claim: String)]? {
+    let plan = contexts ?? grammarContexts(w, live: live)
+    guard plan.active else { return nil }
+    var bad = plan.bad
+    unsupported += plan.unsupported
+    guard bad.isEmpty else { return bad }
+    let temp = scratchDir("gate-language-")
+    defer { try? FileManager.default.removeItem(atPath: temp) }
+    for (index, context) in plan.contexts.enumerated() {
+        if plan.unsupported.contains(where: { residue in
+            residue.id == context.name || context.units.contains { residue.address.hasPrefix($0.path + ":") }
+        }) { continue }
+        if context.courtContext != nil {
+            bad += grammarCourtGuards(context, &size, unsupported: &unsupported, coverage: coverage)
+            continue
+        }
+        let formRows = context.rows.filter { $0.role == "forms" }
+        guard !formRows.isEmpty else { continue } // WorldFile keeps its plain court.
+        let own = context.units.filter { unit in formRows.contains { $0.path == unit.path } }
+        let lent = Set(context.units.flatMap { unit -> Set<String> in
+            guard let clean = try? WhereJudge.stripComments(unit.text) else { return [] }
+            return WhereJudge.declaredBuilders(clean)
+        })
+        let text: String
+        do {
+            text = try own.map { unit in
+                try context.rows.contains { $0.path == unit.path && $0.kind == "DocumentFile" }
+                    ? documentDeclarations(unit.text, lent: lent) : unit.text
+            }.joined(separator: "\n")
+        } catch {
+            unsupported.append(FormResidue(id: context.name, address: (own.first?.path ?? "gate.manifest.swift") + ":1", reason: String(describing: error)))
+            continue
+        }
+        let file = joinPath(temp, "context-\(index).swift")
+        do { try text.write(toFile: file, atomically: false, encoding: .utf8) }
+        catch { bad.append((context.rows.first?.path ?? "gate.manifest.swift", "cannot carry Language sources")); continue }
+        var addresses: [String: String] = [:]
+        for unit in context.units {
+            for (found, line) in matchesAt("(?m)^\\s*public (?:enum|protocol|typealias) (\\w+)", unit.text) {
+                if addresses[found[0]] == nil { addresses[found[0]] = unit.path + ":\(line)" }
+            }
+        }
+        let said = courtSays(["where", file] + context.definitions)
+        bad += canonGuard(w, said, said.contains("THE WHERE") || said.contains("✗"), "judge where")
+        for (id, claim) in whereRefused(said) {
+            let at = id.flatMap { addresses[$0] } ?? (context.rows.first?.path ?? "gate.manifest.swift") + ":1"
+            if claim.contains("normalization limit reached at '") && claim.hasSuffix("; no impossibility inferred") {
+                unsupported.append(FormResidue(id: id ?? context.name, address: at, reason: claim))
+            } else { bad.append((at, claim)) }
+        }
+        if let m = matches("(\\d+) equalities and (\\d+) memberships judged across (\\d+) uses", said).first {
+            for (key, n) in zip(["equalities", "memberships", "uses"], m) { size[key, default: 0] += Int(n) ?? 0 }
+        } else if said.contains(WhereAnswer.nothingAsked) { size["equalities", default: 0] += 0 }
+        if let q = countQuestion(text) {
+            let counted = courtSays(["count", file] + context.definitions + ["--predicate", q.predicate, "--encoding", q.encoding, "--sigma", q.sigma])
+            bad += canonGuard(w, counted, counted.contains("COUNT"), "judge count")
+            for line in counted.components(separatedBy: "\n") where line.hasPrefix("✗") {
+                bad.append(((context.rows.first?.path ?? "gate.manifest.swift") + ":1", String(line.dropFirst()).trimmingCharacters(in: .whitespaces)))
+            }
+            if let m = matches("(\\d+) source-bound readings checked", counted).first { size["readings", default: 0] += Int(m[0]) ?? 0 }
+        }
+    }
+    return bad
+}
+
+func grammarIndependentSources(_ w: WorldState, _ sources: [(String, String)]) -> [(String, String)] {
+    let contextual = Set((w.layout?.rows ?? []).filter { $0.language != nil }.map(\.path))
+    return sources.filter { !contextual.contains($0.0) }
+}
+
+// ── GRAMMAR CONTEXTS END.
+
+func formsDefinitions(_ w: WorldState, language: String? = nil) -> (paths: [String], bad: [(address: String, claim: String)]) {
+    guard let root = layoutDir(w) else { return ([], []) }
+    let record = (root as NSString).appendingPathComponent(".gate/forms-definitions.json")
+    guard FileManager.default.fileExists(atPath: record) else {
+        return ([], takenInputs(w).bad)
+    }
+    guard let data = FileManager.default.contents(atPath: record),
+          let spec = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        return ([], [(".gate/forms-definitions.json:1", "cannot read the world's definitions record")])
+    }
+    if spec["format"] as? Int == 2 {
+        let resolved = takenInputs(w)
+        if !resolved.bad.isEmpty { return ([], resolved.bad) }
+        let contexts = spec["languages"] as? [String: [String: Any]] ?? [:]
+        if (w.layout?.rows ?? []).contains(where: { $0.language != nil })
+            || contexts.values.contains(where: { $0["scope_map"] != nil && !($0["scope_map"] is NSNull) }) {
+            let plan = grammarContexts(w)
+            if !plan.bad.isEmpty { return ([], plan.bad) }
+            guard let language = language,
+                  let context = plan.contexts.first(where: { $0.name == language }) else {
+                return ([], [(".gate/forms-definitions.json:1", "this definition read requires its row's explicit Language")])
+            }
+            return (context.definitions, [])
+        }
+        var selected: [String] = []
+        for context in contexts.values {
+            for name in context["definitions"] as? [String] ?? [] {
+                guard let path = resolved.paths[name] else {
+                    return ([], [(".gate/forms-definitions.json:1", "unresolved definition input " + name)])
+                }
+                if !selected.contains(path) { selected.append(path) }
+            }
+        }
+        return (selected, [])
+    }
+    guard spec["format"] == nil || spec["format"] as? Int == 1 else { return ([], takenInputs(w).bad) }
+    guard let files = spec["files"] as? [[String: String]], !files.isEmpty else {
+        return ([], [(".gate/forms-definitions.json:1", "cannot read the world's definitions record")])
+    }
+    var paths: [String] = [], bad: [(address: String, claim: String)] = []
+    for item in files {
+        guard let name = item["path"], name.hasPrefix(".gate/"), !name.contains(".."),
+              let want = item["sha256"] else {
+            bad.append((".gate/forms-definitions.json:1", "a definition has no local path or sha256")); continue
+        }
+        let path = (root as NSString).appendingPathComponent(name)
+        guard let bytes = FileManager.default.contents(atPath: path), sha256Hex(bytes) == want else {
+            bad.append((name + ":1", "definition bytes differ from the world's compiler pin")); continue
+        }
+        paths.append(path)
+    }
+    return (paths, bad)
+}
+
+func formsGuards(_ w: WorldState, _ size: inout [String: Int],
+                 unsupported: inout [FormResidue], live: [String: String] = [:],
+                 contexts: GrammarContexts? = nil, coverage: GrammarCoverage? = nil) -> [(address: String, claim: String)] {
+    // ── ONE WORLD IS WHAT A CLAIM REACHES. The forms rows of a layout are glued
+    // into worlds by the names they use: a row joins every row that declares a
+    // name it uses and does not declare itself, and the rows so joined are one
+    // world for the where court. Judged one file at a time, a certificate whose
+    // gate stands in the next file is no certificate to the court, and "nothing
+    // was judged" would be said over a claim. Glued all into one, two pages that
+    // each mean their own `Reads` (a verb's touch, a key's permission) leave a
+    // court with no scope rule no way to choose, and it reads nothing. The shelf
+    // worlds an operator overrides are judged each as its own stream
+    guard let layout = w.layout else { return [] }
+    for row in layout.rows {
+        if let kind = row.kind, unsupportedKind(kind) {
+            let reader = installedKindReaders()[kind] ?? "unavailable"
+            unsupported.append(FormResidue(id: row.name ?? row.path, address: "gate.manifest.swift:\(row.line)",
+                reason: "Kind \(kind) has no installed supported Reader (\(reader))"))
+        } else if row.kind == "CatalogFile" {
+            unsupported.append(FormResidue(id: row.name ?? row.path, address: "gate.manifest.swift:\(row.line)",
+                reason: "Kind CatalogFile uses CatalogReaderV1 in a Publication plan; it has no standalone relation court"))
+        }
+    }
+    if let guarded = grammarContextGuards(w, &size, unsupported: &unsupported, live: live, contexts: contexts, coverage: coverage) { return guarded }
+    let taken = takenInputs(w)
+    if !taken.bad.isEmpty { return taken.bad }
+    let rows = layout.rows.filter { $0.role == "forms" && inputPath($0, w, taken) != nil }
+    if rows.isEmpty { return [] }
+    var bad: [(address: String, claim: String)] = []
+    let definitions = formsDefinitions(w)
+    bad += definitions.bad
+    if !definitions.bad.isEmpty { return bad }
+    func bodyOf(_ r: LayoutRow) -> String {
+        if r.source == "mine", let typed = live[r.path] { return typed }
+        return inputPath(r, w, taken).flatMap { readText($0) } ?? ""
+    }
+    let lent = Set(definitions.paths.flatMap { path -> Set<String> in
+        guard let text = readText(path), let clean = try? WhereJudge.stripComments(text) else { return [] }
+        return WhereJudge.declaredBuilders(clean)
+    })
+    var documentTexts: [String: String] = [:]
+    for row in rows where row.kind == "DocumentFile" {
+        do {
+            let text = try documentDeclarations(bodyOf(row), lent: lent)
+            _ = try WhereJudge.read(text, lent: lent)
+            documentTexts[row.path] = text
+        } catch {
+            let message = String(describing: error)
+            let line = matches(#"cannot read line (\d+)"#, message).first?.first ?? "1"
+            unsupported.append(FormResidue(id: row.name ?? row.path, address: row.path + ":" + line, reason: "DocumentReader: " + message))
+            documentTexts[row.path] = ""
+        }
+    }
+    func readingOf(_ row: LayoutRow) -> String { documentTexts[row.path] ?? bodyOf(row) }
+    // where each name is declared among some rows: a refusal is addressed to
+    // the row and line that declare the claim it names
+    func declared(_ among: [LayoutRow]) -> [String: String] {
+        var at: [String: String] = [:]
+        for r in among {
+            for (i0, line) in bodyOf(r).components(separatedBy: "\n").enumerated() {
+                if let m = matchAt(line.trimmingCharacters(in: .whitespaces),
+                                   "public (?:typealias|enum|protocol) (\\w+)"),
+                   at[m[1]] == nil {
+                    at[m[1]] = "\(r.path):\(i0 + 1)"
+                }
+            }
+        }
+        return at
+    }
+    var streams: [(name: String, rows: [LayoutRow], text: String, mine: [(String, String)])] = []
+    for shelfName in SHELF_ORDER {
+        let (text, placed, clash) = presentedOver(w, shelfName)
+        bad += clash
+        if !placed.isEmpty { streams.append((shelfName, rows, text, placed)) }
+    }
+    // a world with no code at all, a page of prose in comments, holds nothing
+    // any court could read, so no court is asked about it
+    let worlds = worldsOf(rows.map { ($0, bodyOf($0)) }).filter { world in
+        world.contains { !codeOf(bodyOf($0)).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+    for (k, world) in worlds.enumerated() {
+        streams.append(("presented-\(k)", world, world.map(readingOf).joined(separator: "\n"), []))
+    }
     let tmp = tempRoot() + "gate-forms-\(ProcessInfo.processInfo.processIdentifier)"
     try? FileManager.default.createDirectory(atPath: tmp, withIntermediateDirectories: true)
-    for (shelfName, text, mine) in streams {
-        let fp = (tmp as NSString).appendingPathComponent((shelfName ?? "presented") + ".swift")
+    let premise = (tmp as NSString).appendingPathComponent("Primitive.swift")
+    try? PinnedCorpus.primitive.write(toFile: premise, atomically: false, encoding: .utf8)
+    for (streamName, among, text, mine) in streams {
+        let whereMap = declared(among)
+        // These are outstanding requirements, not refusals and not checked claims.
+        // In an overridden shelf world the shipped ledger survives value edits.
+        let requirements = among.contains { $0.kind == "DocumentFile" } ? among.map(bodyOf).joined(separator: "\n") : text
+        for item in matches("^// gate-unsupported: (\\w+) \\| (.+)$", requirements, lines: true) {
+            let id = item[0], reason = item[1]
+            let spot = whereMap[id] ?? reachedRestatement(id, text, mine)
+                ?? among.first?.path ?? streamName
+            if matches("^public typealias " + id + "\\b", text, lines: true).isEmpty {
+                bad.append((spot, "unsupported requirement '" + id + "' lost its declared relation"))
+            }
+            if !unsupported.contains(where: { $0.id == id }) {
+                unsupported.append(FormResidue(id: id, address: spot, reason: reason))
+            }
+        }
+        let fp = (tmp as NSString).appendingPathComponent(streamName + ".swift")
         try? text.write(toFile: fp, atomically: false, encoding: .utf8)
-        let said = courtSays(["where", fp])
+        // A declared count world lends the same pinned definitions to its
+        // nominal certificates: Twice is an alias, not an arithmetic guess.
+        let borrowed = definitions.paths.isEmpty
+            ? (countQuestion(text) == nil ? [] : [premise]) : definitions.paths
+        let said = courtSays(["where", fp] + borrowed)
         bad += canonGuard(w, said,
                           (said.contains("THE WHERE") && said.contains("canon v"))
                               || said.contains("✗"),
                           "judge where")
-        for (cert, claim) in whereRefused(said) {
+        for (cert, claim, presentation) in plainWhereRefusals(said, lawNotes([text])) {
+            // Exhausting normalization does not disprove a requirement.
+            // Keep its original ID and address in the outstanding ledger.
+            if claim.hasPrefix("THE WHERE: ") && claim.contains("normalization limit reached at '")
+                && claim.hasSuffix("; no impossibility inferred") {
+                let marked = unsupported.filter { r in among.contains { r.address.hasPrefix($0.path + ":") } }
+                if marked.isEmpty {
+                    unsupported.append(FormResidue(id: cert ?? streamName,
+                        address: cert.flatMap { whereMap[$0] } ?? (among.first?.path ?? streamName) + ":1",
+                        reason: claim))
+                }
+                continue
+            }
             var spot: String? = cert.flatMap { whereMap[$0] }
             if spot == nil && !mine.isEmpty {
                 let touched = mine.map { $0.0 }.filter { claim.contains($0) }
@@ -2241,17 +3565,206 @@ func formsGuards(_ w: WorldState, _ size: inout [String: Int],
                     spot = mine.first(where: { $0.0 == t })?.1
                 }
             }
-            bad.append((spot ?? rows[0].path, plainly(claim, lawNotes([text]))))
+            bad.append((spot ?? among.first?.path ?? rows[0].path, presentation))
         }
         if let m = matches("(\\d+) equalities and (\\d+) memberships judged across (\\d+) uses",
                            said).first {
             size["equalities"] = (size["equalities"] ?? 0) + (Int(m[0]) ?? 0)
             size["memberships"] = (size["memberships"] ?? 0) + (Int(m[1]) ?? 0)
             size["uses"] = (size["uses"] ?? 0) + (Int(m[2]) ?? 0)
+        } else if said.contains(WhereAnswer.nothingAsked) {
+            // the court sat and was asked nothing: a measure of none, not silence
+            size["equalities"] = size["equalities"] ?? 0
         }
+    }
+    // and a stream that declares a count question is asked it: a world of the
+    // layout glued the same way, so a reading written in one file stands on the
+    // ladder and the question another file of it declares, and a shelf page with
+    // the values an operator restated in it, so a number moved is held by every
+    // law that stands on it. Both on the corpus's Primitive
+    func askCount(_ fp: String, _ text: String, _ questionsFrom: [String],
+                  _ at: [String: String], _ mine: [(String, String)], _ fallback: String) {
+        var asked: [(predicate: String, encoding: String, sigma: String)] = []
+        for t in questionsFrom {
+            if let q = countQuestion(t), !asked.contains(where: { $0 == q }) { asked.append(q) }
+        }
+        if asked.isEmpty { return }
+        if !FileManager.default.fileExists(atPath: premise) {
+            try? PinnedCorpus.primitive.write(toFile: premise, atomically: false, encoding: .utf8)
+        }
+        try? text.write(toFile: fp, atomically: false, encoding: .utf8)
+        for q in asked {
+            let counted = courtSays(["count", fp] + (definitions.paths.isEmpty ? [premise] : definitions.paths)
+                                   + ["--predicate", q.predicate,
+                                     "--encoding", q.encoding, "--sigma", q.sigma])
+            bad += canonGuard(w, counted, counted.contains("COUNT"), "judge count")
+            for line in counted.components(separatedBy: "\n") {
+                let l = line.trimmingCharacters(in: .whitespaces)
+                guard l.hasPrefix("✗") else { continue }
+                let claim = String(l.dropFirst()).trimmingCharacters(in: .whitespaces)
+                // a wrong answer names its reading; a reading the court could not
+                // finish names only where it stopped, so it lands on the file.
+                // Over a shelf page the line to fix is the operator's: the first
+                // restated name the reading reaches through the page's aliases
+                let cert = claim.hasPrefix("COUNT:") ? matchAt(claim, "COUNT: '(\\w+)(?:\\.\\w+)*'").map { $0[1] } : nil
+                let spot = cert.flatMap { mine.isEmpty ? nil : reachedRestatement($0, text, mine) }
+                    ?? cert.flatMap { at[$0] } ?? fallback
+                bad.append((spot, claim))
+            }
+            if let m = matches("(\\d+) source-bound readings checked", counted).first {
+                size["readings"] = (size["readings"] ?? 0) + (Int(m[0]) ?? 0)
+            }
+        }
+    }
+    for (streamName, among, text, mine) in streams where !mine.isEmpty {
+        askCount((tmp as NSString).appendingPathComponent("counted-" + streamName + ".swift"),
+                 text, [text], declared(among), mine, among.first?.path ?? rows[0].path)
+    }
+    for (k, world) in worlds.enumerated() {
+        askCount((tmp as NSString).appendingPathComponent("counted-\(k).swift"),
+                 world.map(readingOf).joined(separator: "\n"), world.map(bodyOf),
+                 declared(world), [], world[0].path)
     }
     try? FileManager.default.removeItem(atPath: tmp)
     return bad
+}
+
+// the operator's line a reading stands on: the first name it reaches, through
+// the aliases the text defines, that the operator restated
+func reachedRestatement(_ reading: String, _ text: String, _ mine: [(String, String)]) -> String? {
+    var defs: [String: String] = [:]
+    for m in matches("^public typealias (\\w+)(?:<[^=]*>)? = (.+)$", text, lines: true) {
+        defs[m[0]] = m[1]
+    }
+    var seen = Set<String>()
+    var todo = [reading]
+    while let name = todo.popLast() {
+        guard seen.insert(name).inserted else { continue }
+        if let hit = mine.first(where: { $0.0 == name }) { return hit.1 }
+        for t in matches("\\b([A-Z]\\w*)\\b", defs[name] ?? "") { todo.append(t[0]) }
+    }
+    return nil
+}
+
+// the rows joined by the names they use: a row and every row declaring a name
+// it uses and does not declare itself, closed under that, in layout order.
+// Comments and strings carry no reference a court reads, so they are cut first
+func codeOf(_ text: String) -> String {
+    // line comments, block comments (which nest in Swift) and string literals
+    // cut, newlines kept so a line stays a line
+    var out: [Character] = []
+    var depth = 0
+    var inString = false
+    var chars = Array(text)
+    chars.append("\n")
+    var i = 0
+    while i < chars.count - 1 {
+        let c = chars[i], next = chars[i + 1]
+        if depth > 0 {
+            if c == "/" && next == "*" { depth += 1; i += 2; continue }
+            if c == "*" && next == "/" { depth -= 1; i += 2; continue }
+            if c == "\n" { out.append(c) }
+            i += 1
+            continue
+        }
+        if inString {
+            if c == "\\" { i += 2; continue }
+            if c == "\"" || c == "\n" { inString = false }
+            if c == "\n" { out.append(c) }
+            i += 1
+            continue
+        }
+        if c == "/" && next == "*" { depth = 1; i += 2; continue }
+        if c == "/" && next == "/" {
+            while i < chars.count - 1 && chars[i] != "\n" { i += 1 }
+            continue
+        }
+        if c == "\"" { inString = true; i += 1; continue }
+        out.append(c)
+        i += 1
+    }
+    return String(out)
+}
+
+func worldsOf(_ rows: [(row: LayoutRow, text: String)]) -> [[LayoutRow]] {
+    let texts = rows.map { codeOf($0.text) }
+    let declares: [Set<String>] = texts.map { t in
+        Set(matches("^public (?:enum|protocol|typealias|struct|class) (\\w+)", t, lines: true)
+            .map { $0[0] })
+    }
+    // a declaration's own parameters and associated types are its own names:
+    // using them reaches no other row
+    func local(_ t: String) -> Set<String> {
+        var names = Set(matches("associatedtype (\\w+)", t).map { $0[0] })
+        let chars = Array(t)
+        let ns = t as NSString
+        guard let re = compiled("(?:enum|struct|class|typealias) \\w+\\s*<", []) else { return names }
+        for hit in re.matches(in: t, range: NSRange(location: 0, length: ns.length)) {
+            // the parameter list from its `<` to the matching `>`, split at its
+            // own commas: each item's first word is a parameter
+            var i = String(ns.substring(to: hit.range.location + hit.range.length)).count
+            var depth = 1
+            var item = ""
+            var items: [String] = []
+            while i < chars.count, depth > 0 {
+                let c = chars[i]
+                if c == "<" { depth += 1 } else if c == ">" { depth -= 1 }
+                if depth == 1 && c == "," { items.append(item); item = "" }
+                else if depth > 0 { item.append(c) }
+                i += 1
+            }
+            items.append(item)
+            for it in items {
+                if let w = matchAt(it.trimmingCharacters(in: .whitespacesAndNewlines), "(\\w+)") {
+                    names.insert(w[1])
+                }
+            }
+        }
+        return names
+    }
+    let locals: [Set<String>] = texts.map(local)
+    let uses: [Set<String>] = texts.map { t in Set(matches("\\b([A-Z]\\w*)\\b", t).map { $0[0] }) }
+    var parent = Array(rows.indices)
+    func root(_ i: Int) -> Int {
+        var i = i
+        while parent[i] != i { parent[i] = parent[parent[i]]; i = parent[i] }
+        return i
+    }
+    for i in rows.indices {
+        for name in uses[i].subtracting(declares[i]).subtracting(locals[i]) {
+            for j in rows.indices where j != i && declares[j].contains(name) {
+                parent[root(i)] = root(j)
+            }
+        }
+    }
+    var groups: [Int: [LayoutRow]] = [:]
+    var order: [Int] = []
+    for i in rows.indices {
+        let r = root(i)
+        if groups[r] == nil { order.append(r) }
+        groups[r, default: []].append(rows[i].row)
+    }
+    return order.map { groups[$0]! }
+}
+
+// ── AND A PAGE WHOSE LAWS ARE NUMBERS ASKS THE COUNT COURT. The question is
+// read off the page's own declaration: the reading that conforms to
+// PredicateReading names its Sigma, its Encoding and its Predicate, and those
+// three are what `judge count` is asked. The count court reads Unit, Never and
+// Plus by the corpus's Primitive, and this binary carries that file at the
+// judge's own pin (bin/build-cli.sh), so a clone without the corpus still
+// judges the bench by the premise the court was built with.
+func countQuestion(_ text: String) -> (predicate: String, encoding: String, sigma: String)? {
+    for m in matches("public enum \\w+<[^{]*>:\\s*PredicateReading\\s*\\{([^}]*)\\}", text) {
+        let body = m[0]
+        func said(_ key: String) -> String? {
+            matches("typealias " + key + " = (\\w+)", body).first?.first
+        }
+        if let p = said("Predicate"), let e = said("Encoding"), let g = said("Sigma") {
+            return (p, e, g)
+        }
+    }
+    return nil
 }
 
 func policyPathOf(_ w: WorldState) -> String? {
@@ -2400,29 +3913,10 @@ func stdlibGuards(_ w: WorldState) -> [(address: String, claim: String)] {
     return bad
 }
 
-func gateShapeGuards(_ w: WorldState) -> [(address: String, claim: String)] {
-    // a gated conformance written on one line is read by no court, in either
-    // carrier of the court: refused rather than left quietly unjudged
-    var bad: [(address: String, claim: String)] = []
-    guard let layout = w.layout else { return bad }
-    let d = (layout.manifest as NSString).deletingLastPathComponent
-    for r in layout.rows where r.role == "forms" {
-        let path = (d as NSString).appendingPathComponent(r.path)
-        guard FileManager.default.fileExists(atPath: path), let text = readText(path)
-        else { continue }
-        for (i0, line) in text.components(separatedBy: "\n").enumerated() {
-            if !matches("^\\s*(?:public )?extension\\s+\\w+\\s*:\\s*\\w+\\b.*\\bwhere\\b.*"
-                        + "\\{\\s*\\}\\s*$", line).isEmpty {
-                bad.append(("\(r.path):\(i0 + 1)",
-                            "a gated conformance written on one line is read by no court: "
-                          + "break the line before `where` and the law is judged again. "
-                          + "Left as it is, every certificate over it holds without "
-                          + "being checked"))
-            }
-        }
-    }
-    return bad
-}
+// A gated conformance written on one line was read by no court at canon two,
+// and a guard here refused the shape. At canon four the where court reads it
+// in both carriers, the binary and the wasm module, and judges it as it judges
+// the broken line, so the guard retired with the reason it stood on.
 
 // ── THE ONE READING LAW OF A ROSTER PAGE. The page is read here, once,
 // into rows, and every consumer takes the rows. A second reader of the
@@ -2481,7 +3975,7 @@ func ownSurfaceGuards(_ w: WorldState) -> [(address: String, claim: String)] {
     return bad
 }
 
-let BENCH_VIEWS = ["full", "bare", "table"]
+let BENCH_VIEWS = ["full", "bare", "table", "drawing"]
 
 func personalPathOf(_ w: WorldState) -> String? {
     guard let f = w.facts else { return nil }
@@ -2492,15 +3986,34 @@ func personalPathOf(_ w: WorldState) -> String? {
         .appendingPathComponent(repoKey(base)) as NSString).appendingPathComponent("my.swift")
 }
 
-func benchFilesOf(_ w: WorldState) -> [(String, String)] {
+// A text reading is UTF-8 without binary control bytes. Its bytes stay intact;
+// no extension, language parser or desk-specific name decides what is text.
+func benchText(_ path: String) -> Bool {
+    guard let bytes = inputBytes(path),
+          let text = String(data: bytes, encoding: .utf8) else { return false }
+    return !text.unicodeScalars.contains { ($0.value < 32 && ![9, 10, 13].contains($0.value)) || $0.value == 127 }
+}
+
+func benchFilesOf(_ w: WorldState, readings: Bool = false, resolved: TakenResolution? = nil) -> [(String, String)] {
     // the shared world, its forms, the layout, the policy and the personal
     // slot: the list the panel opens, and the list the stream guards walk
     guard let f = w.facts else { return [] }
     let base = (absPath(f) as NSString).deletingLastPathComponent
-    var out: [(String, String)] = worldFilesOf(w).map { (relPath($0, base), $0) }
-    for r in w.layout?.rows ?? [] where r.role == "forms" {
-        let p = (base as NSString).appendingPathComponent(r.path)
-        if FileManager.default.fileExists(atPath: p),
+    let taken = resolved ?? takenInputs(w)
+    // Resolve each row once. Searching the rows for every source repeated
+    // filesystem containment checks for each pair of parts.
+    var rowNames: [String: String] = [:]
+    for row in w.layout?.rows ?? [] {
+        if let path = inputPath(row, w, taken), rowNames[path] == nil { rowNames[path] = row.path }
+    }
+    var out: [(String, String)] = worldFilesOf(w, resolved: taken).map { path in
+        (rowNames[path] ?? relPath(path, base), path)
+    }
+    for r in w.layout?.rows ?? [] where r.role == "forms"
+        || (r.role == "carried" && r.source == "mine" && r.path.hasSuffix(".swift"))
+        || (readings && r.kind == "CarriedFile" && r.source == "theirs" && taken.v2) {
+        if let p = inputPath(r, w, taken), FileManager.default.fileExists(atPath: p),
+           !(r.kind == "CarriedFile" && r.source == "theirs") || benchText(p),
            !out.contains(where: { $0.0 == r.path && $0.1 == p }) {
             out.append((r.path, p))
         }
@@ -2529,7 +4042,7 @@ func opensAs(_ w: WorldState, _ path: String) -> (view: String?, said: String?) 
             return (BENCH_VIEWS.contains(said) ? said : nil, said)
         }
     }
-    guard let data = FileManager.default.contents(atPath: path) else { return (nil, nil) }
+    guard let data = inputBytes(path) else { return (nil, nil) }
     let head = String(decoding: data.prefix(2000), as: UTF8.self)
     for line in head.components(separatedBy: "\n").prefix(6) {
         if let m = matchAt(line.trimmingCharacters(in: .whitespaces), "//\\s*opens:\\s*(\\S+)") {
@@ -2618,8 +4131,9 @@ func binaryRuns(_ p: String) -> Bool {
     proc.arguments = ["judge"]
     proc.standardOutput = Pipe()
     proc.standardError = Pipe()
-    do { try proc.run() } catch { return false }
-    waitDone(proc)
+    let done: DispatchSemaphore
+    do { done = try startProcess(proc) } catch { return false }
+    done.wait()
     return true
 }
 
@@ -3099,7 +4613,9 @@ func nextRung(_ w: WorldState, _ refused: Bool, serving: Bool = false) -> String
         // of the same fact, said from their own side: what you commit is what
         // holds. The old wording survives in this comment, which is the
         // decision, and nowhere a terminal prints.
-        return "run `gate init .` to wire the hook: from here on, what you commit is what holds"
+        // A commit may carry an addressed remainder, so the hook promises a
+        // check and a visible obligation rather than an entirely holding world.
+        return "run `gate init .` to wire the hook: each commit is checked and unfinished claims stay named"
     }
     let rows = (w.layout?.rows ?? []).filter { !$0.path.isEmpty }
     let saidSomething = w.facts.map { FileManager.default.fileExists(atPath: $0) } ?? false
@@ -3382,22 +4898,35 @@ struct StatusAnswer {
     var wallMs: Double = 0
     var world: [String]? = nil          // declarations, lookups, premises
     var whereSize: [String: Int] = [:]
+    var unsupported: [FormResidue] = []
+    var readers: [StatusJSON] = []
+    var unchecked: [StatusJSON] = []
+    var courtReadings: [StatusJSON] = []
     var next = ""
     // the same ladder read from the bench: the room the reader is in is a rung
     // already taken, so it is not offered back to them (`serve`, below)
     var servingNext = ""
     var then = ""
-    var verdict: String { noWorld ? "no world here" : (refusals.isEmpty ? "holds" : "refused") }
+    var verdict: String {
+        noWorld ? "no world here" : formsOutcome(refusals.count, unsupported,
+            formsChecked(whereSize) + (world == nil ? 0 : 1))
+    }
 }
 
-func statusAnswer() -> StatusAnswer {
+func statusAnswer(_ supplied: WorldState? = nil, contexts: GrammarContexts? = nil) -> StatusAnswer {
     // ── THE ANSWER THE BATTERY OPENS THROUGH A DOOR, and no argv a person
     // types: byte for byte against the other carrier on the worlds the battery
     // keeps. The verb itself moves with the asking pack, because the tables
     // bootstrap (`ensure_world`, python's `cmd_import`) has not moved: this
     // reads worlds, it does not seed them.
+    // The CLI answer, like one HTTP response, owns the bytes it verifies.
+    // Nested readers reuse that resolution; the next answer starts afresh.
+    // A caller with an active request retains its own lifetime and selection.
+    let ownsInputs = TAKEN_REQUEST == nil
+    if ownsInputs { TAKEN_REQUEST = [:] }
+    defer { if ownsInputs { TAKEN_REQUEST = nil } }
     loadStatusShelf()
-    let w = discoverWorld()
+    let w = supplied ?? discoverWorld()
     ensureWorld(w)                  // tables and no world yet: seed it, once
     let files = worldFilesOf(w)
     let here = FileManager.default.currentDirectoryPath
@@ -3428,28 +4957,28 @@ func statusAnswer() -> StatusAnswer {
         return answer
     }
     let t0 = Date()
-    let raw = courtSays(files)
+    let raw = courtSays(files, wholeCompany: true)
     let wallMs = ((Date().timeIntervalSince(t0) * 1000 * 10).rounded(.toNearestOrEven)) / 10
     var refusals = judgedRefusals(raw)
     if files.count > 1 {
-        // the declared list, not the readable list: a ghost row is the layout
-        // guard's to name, and both carriers place claims over what is here
-        let sources = files.filter { FileManager.default.fileExists(atPath: $0) }
-            .map { (($0 as NSString).lastPathComponent, readText($0) ?? "") }
-        refusals = attributeRefusals(refusals, sources)
+        let sources = benchFilesOf(w).filter { files.contains($0.1) }
+            .map { ($0.0, readText($0.1) ?? "") }
+        refusals = refineSourceRefusals(refusals, sources)
     }
     if !files.isEmpty {
         refusals += canonGuard(w, raw, raw.contains("THE JUDGE"), "judge")
     }
     refusals += manifestGuards(w)
     var whereSize: [String: Int] = [:]
-    refusals += formsGuards(w, &whereSize)
+    var unsupported: [FormResidue] = []
+    let courtCoverage = GrammarCoverage()
+    refusals += formsGuards(w, &whereSize, unsupported: &unsupported, contexts: contexts, coverage: courtCoverage)
     refusals += policyGuards(w)
     refusals += stdlibGuards(w)
-    refusals += gateShapeGuards(w) + ownSurfaceGuards(w) + opensGuards(w)
+    refusals += ownSurfaceGuards(w) + opensGuards(w)
     refusals += vendoredGuards(w) + takenJudgeGuard(w)
     refusals += codeownersPairGuards(w)
-    refusals += duplicateGuardsOver(diskSources(w))
+    refusals += duplicateGuardsOver(grammarIndependentSources(w, diskSources(w)))
     refusals += entryGuardsOver(diskSources(w))
     let times = matches("([\\d.]+) ms", raw).compactMap { $0.first }
     var judged = files
@@ -3457,13 +4986,25 @@ func statusAnswer() -> StatusAnswer {
         judged = Set((w.layout?.rows ?? []).filter { $0.role == "forms" }.map { $0.path }).sorted()
     }
     answer.judged = judged
+    answer.readers = (w.layout?.rows ?? []).compactMap { row in
+        guard let kind = row.kind, let reader = installedKindReaders()[kind] else { return nil }
+        return .object([("row", .text(row.name ?? row.path)), ("kind", .text(kind)),
+                        ("reader", .text(reader)), ("address", .text("gate.manifest.swift:\(row.line)"))])
+    }
+    answer.unchecked = (w.layout?.rows ?? []).filter { $0.kind == "DocumentFile" && !courtCoverage.sources.contains($0.path) }.map { row in
+        .object([("address", .text(row.path + ":1")),
+                 ("reason", .text("DocumentReaderV1 reads declarations; Swift builder bodies are unchecked. Drawing is a separate reading."))])
+    }
+    answer.unchecked += courtCoverage.exclusions
+    answer.courtReadings = courtCoverage.reports
     answer.refusals = refusals
     answer.judgeMs = times.last
     answer.wallMs = wallMs
     answer.world = matches("(\\d+) declarations · (\\d+) lookups · (\\d+) premises", raw).first
     answer.whereSize = whereSize
-    answer.next = nextRung(w, !refusals.isEmpty)
-    answer.servingNext = nextRung(w, !refusals.isEmpty, serving: true)
+    answer.unsupported = unsupported
+    answer.next = nextRung(w, !refusals.isEmpty || !unsupported.isEmpty)
+    answer.servingNext = nextRung(w, !refusals.isEmpty || !unsupported.isEmpty, serving: true)
     return answer
 }
 
@@ -3474,6 +5015,11 @@ func statusAnswer() -> StatusAnswer {
 // where the answer is PRINTED, which is what the other carrier does in its own
 // main; the bench recomputes the step for the room it is in and lifts the
 // command out of THAT one, so the field cannot arrive here already spent.
+func formResidueJSON(_ items: [FormResidue]) -> StatusJSON {
+    .list(items.map { .object([("id", .text($0.id)), ("address", .text($0.address)),
+                               ("reason", .text($0.reason))]) })
+}
+
 func statusPairs(_ a: StatusAnswer) -> [(String, StatusJSON)] {
     if a.noWorld {
         return [
@@ -3496,6 +5042,10 @@ func statusPairs(_ a: StatusAnswer) -> [(String, StatusJSON)] {
         ("wall_ms", .raw(String(a.wallMs))),
         ("mutates", .raw("false")),
     ]
+    if a.verdict == "empty" { pairs.append(("reason", .text(EMPTY_FORMS_REASON))) }
+    if !a.readers.isEmpty { pairs.append(("readers", .list(a.readers))) }
+    if !a.unchecked.isEmpty { pairs.append(("unchecked", .list(a.unchecked))) }
+    if !a.courtReadings.isEmpty { pairs.append(("court_readings", .list(a.courtReadings))) }
     if let m = a.world {
         pairs.append(("world", .object([("declarations", .raw(m[0])),
                                         ("lookups", .raw(m[1])),
@@ -3505,8 +5055,10 @@ func statusPairs(_ a: StatusAnswer) -> [(String, StatusJSON)] {
         pairs.append(("forms", .object([
             ("equalities", .raw(String(a.whereSize["equalities"] ?? 0))),
             ("memberships", .raw(String(a.whereSize["memberships"] ?? 0))),
-            ("uses", .raw(String(a.whereSize["uses"] ?? 0)))])))
+            ("uses", .raw(String(a.whereSize["uses"] ?? 0))),
+            ("readings", .raw(String(a.whereSize["readings"] ?? 0)))])))
     }
+    if !a.unsupported.isEmpty { pairs.append(("unsupported", formResidueJSON(a.unsupported))) }
     pairs.append(("court", .text("the judge")))
     pairs.append(("next", .text(a.next)))
     return pairs
@@ -3522,8 +5074,9 @@ func statusPrinted(_ a: StatusAnswer) -> [(String, StatusJSON)] {
     return pairs
 }
 
-// the door: it prints what the answer above assembled, and decides nothing
-func statusDoor(_ asJson: Bool) -> Never {
+// The hook admits a completed reading with an empty request or an addressed
+// remainder. It prints that state; refusals and failures to read stop a commit.
+func statusDoor(_ asJson: Bool, forCommit: Bool = false) -> Never {
     let a = statusAnswer()
     if a.noWorld {
         if asJson {
@@ -3539,7 +5092,7 @@ func statusDoor(_ asJson: Bool) -> Never {
     if asJson {
         out(statusDumps(.object(statusPrinted(a)), 0) + "\n")
     } else {
-        let head = refusals.isEmpty ? "holds" : "refused \(refusals.count)"
+        let head = refusals.isEmpty ? outcomeLabel(a.verdict) : "refused \(refusals.count)"
         var tail: [String] = []
         if let m = worldM {
             tail.append(many(Int(m[0]) ?? 0, "declaration") + " · "
@@ -3547,19 +5100,24 @@ func statusDoor(_ asJson: Bool) -> Never {
                       + many(Int(m[2]) ?? 0, "premise"))
         }
         if let n = whereSize["equalities"] {
-            if n != 0 {
-                tail.append(many(n, "equality", "equalities"))
-            } else if refusals.isEmpty && worldM == nil {
-                tail.append("nothing claimed here yet, so nothing was checked")
+            let memberships = whereSize["memberships"] ?? 0
+            let counted = whereSize["readings"] ?? 0
+            if n != 0 || memberships != 0 || counted != 0 {
+                if n != 0 { tail.append(many(n, "equality", "equalities")) }
+                if memberships != 0 { tail.append(many(memberships, "membership")) }
+                // the count court's measure beside the where court's: a count
+                // reading is not an equality, and adding them would say so
+                if counted != 0 { tail.append(many(counted, "count reading")) }
             }
         }
         if let ms = times { tail.append(floatRepr(ms) + " ms") }
         var lines = ["status: " + head + (tail.isEmpty ? "" : " · " + tail.joined(separator: " · "))]
         for r in refusals { lines.append("  \(r.address) · \(r.claim)") }
+        for r in a.unsupported { lines.append("  \(r.address) · unsupported \(r.id): \(r.reason)") }
         lines.append("  next: " + next)
         out(lines.joined(separator: "\n") + "\n")
     }
-    exit(refusals.isEmpty ? 0 : 1)
+    exit(!refusals.isEmpty ? 1 : (a.verdict == "holds" || forCommit ? 0 : 2))
 }
 
 // the road's own door: the battery calls this, not a person
@@ -3914,6 +5472,10 @@ func yamlBlock(_ text: String) -> (root: YamlNode, refused: (line: Int, why: Str
     var stack: [(indent: Int, node: YamlNode)] = [(-1, root)]
     var opened = false
     var skipTo = 0
+    // the column of the key whose plain scalar is open, when one is: set the
+    // moment a deeper line reads as the value continuing, cleared the moment
+    // a line comes back to that column
+    var scalarFloor: Int? = nil
     let lines = text.components(separatedBy: "\n")
     for (n, raw) in lines.enumerated() {
         if n < skipTo { continue }
@@ -3934,12 +5496,24 @@ func yamlBlock(_ text: String) -> (root: YamlNode, refused: (line: Int, why: Str
             opened = true
             continue
         }
-        if said.hasPrefix("&") || said.hasPrefix("*") {
-            return (root, (no, "an anchor or an alias, which names a value somewhere else"))
-        }
         let indent = raw.prefix(while: { $0 == " " }).count
         while stack.count > 1 && indent <= stack[stack.count - 1].indent { stack.removeLast() }
         let parent = stack[stack.count - 1].node
+        // ── A PLAIN SCALAR, ONCE BEGUN, OWNS EVERY DEEPER LINE. It begins two
+        // ways: `key: value` on one line (the stack still holds that value),
+        // or `key:` whose first deeper line read as the value continuing (the
+        // floor holds that). A deeper bullet inside one is the value going on,
+        // folded in by yaml itself, never a list item; a deeper `key:` inside
+        // one is yaml's own error, and the refusal says that instead of
+        // reading a key that is not there.
+        if let floor = scalarFloor, indent <= floor { scalarFloor = nil }
+        if scalarFloor != nil || !(parent.value ?? "").isEmpty {
+            if said.contains(": ") || said.hasSuffix(":") {
+                return (root, (no, "a mapping value inside a plain scalar, "
+                                 + "which yaml itself refuses to read"))
+            }
+            continue
+        }
         if said.hasPrefix("- ") || said == "-" {
             let body = said == "-" ? "" : String(said.dropFirst(2))
                 .trimmingCharacters(in: .whitespaces)
@@ -4021,7 +5595,29 @@ func yamlBlock(_ text: String) -> (root: YamlNode, refused: (line: Int, why: Str
         // whole file went unread.
         if !said.contains(": ") && !said.hasSuffix(":") && !said.hasPrefix("- ")
             && indent > (stack.last?.indent ?? -1) {
+            let top = stack[stack.count - 1]
+            if stack.count > 1, top.node.items.isEmpty {
+                if top.node.children.isEmpty {
+                    // `key:` with its value spread plain below: the key owns
+                    // every deeper line until one returns to its column
+                    scalarFloor = top.indent
+                } else if let last = top.node.children.last,
+                          !(last.node.value ?? "").isEmpty, last.node.children.isEmpty {
+                    // `- key: value` going on past its line: the inline key
+                    // owns what lies deeper than its own column, and a
+                    // sibling key at that column closes it
+                    scalarFloor = top.indent + 2
+                }
+            }
             continue
+        }
+        // an anchor or an alias at a structural position. This check sits AFTER
+        // the continuation rule on purpose: a deeper line of a plain scalar may
+        // begin with `&&` (a CEL rule split over lines does, in every operator
+        // CRD), and that is the value going on, not an anchor. The refusal
+        // below names only what it still catches, and the reason is then true.
+        if said.hasPrefix("&") || said.hasPrefix("*") {
+            return (root, (no, "an anchor or an alias, which names a value somewhere else"))
         }
         guard let colon = said.firstIndex(of: ":") else {
             return (root, (no, "a line that is neither a key nor a list item"))
@@ -4795,6 +6391,23 @@ func refineAddresses(_ text: String, _ refusals: [(address: String, claim: Strin
     }
 }
 
+// Refine within the source part already named by the court's line map.
+func refineSourceRefusals(_ refusals: [(address: String, claim: String)],
+                          _ sources: [(String, String)]) -> [(address: String, claim: String)] {
+    return refusals.map { ref in
+        let name = ref.address.components(separatedBy: ":")[0]
+        guard let source = sources.first(where: { $0.0 == name }) else { return ref }
+        let line = Int(ref.address.components(separatedBy: ":").last ?? "") ?? 1
+        let lines = source.1.components(separatedBy: "\n")
+        let start = max(0, min(lines.count, line - 4))
+        let end = max(start, min(lines.count, line + 8))
+        if let at = locateClaim(lines[start..<end].joined(separator: "\n"), ref.claim) {
+            return (address: "\(name):\(start + at)", claim: ref.claim)
+        }
+        return refineAddresses(source.1, [ref], name)[0]
+    }
+}
+
 // ── THE JUDGE'S OWN READING, ASKED FOR. Nothing here grows a grammar over
 // somebody's world: `judge parse` hands out the parse the court already made,
 // and both carriers ask the same route for it. The route lives in the port's
@@ -4823,10 +6436,10 @@ func worldParse(_ path: String) -> Said {
     p.standardOutput = pipe
     p.standardError = quiet
     var said = "", why = ""
-    if (try? p.run()) != nil {
+    if let done = try? startProcess(p) {
         said = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         why = String(data: quiet.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        waitDone(p)
+        done.wait()
     }
     if p.terminationStatus != 0 || said.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         let first = why.split(separator: "\n").first.map(String.init) ?? "no reason given"
@@ -5208,11 +6821,12 @@ func runSaid(_ command: String, _ arguments: [String]) -> (code: Int32, said: St
     let pipe = Pipe(), quiet = Pipe()
     p.standardOutput = pipe
     p.standardError = quiet
-    do { try p.run() } catch { return (127, "") }
+    let done: DispatchSemaphore
+    do { done = try startProcess(p) } catch { return (127, "") }
     let said = String(data: pipe.fileHandleForReading.readDataToEndOfFile(),
                       encoding: .utf8) ?? ""
     quiet.fileHandleForReading.readDataToEndOfFile()
-    waitDone(p)
+    done.wait()
     return (p.terminationStatus, said.trimmingCharacters(in: .whitespacesAndNewlines))
 }
 
@@ -5364,44 +6978,6 @@ func revokeText(_ text: String, _ who: String, _ doc: String) throws -> String {
     return ns.replacingCharacters(in: hits[0].range, with: "")
 }
 
-func hireText(_ text: String, _ f: [String: String]) throws -> String {
-    func said(_ k: String) -> String { f[k] ?? "" }
-    let block = "\n\npublic enum \(said("id")): Employee, Person {\n"
-        + "    public typealias Rank = \(said("rank"))\n"
-        + "    public typealias Home = \(said("home"))\n"
-        + "    public typealias Given = \(said("given"))\n"
-        + "    public typealias Family = \(said("family"))\n"
-        + "    public typealias Born = \(said("born"))\n"
-        + "    public typealias Site = \(said("site"))\n"
-        + "    public typealias Sex = Given.Sex\n}"
-    let ns = text as NSString
-    guard let roster = try? NSRegularExpression(pattern: "public enum \\w+: Employee, Person \\{.*?\\n\\}",
-                                                options: [.dotMatchesLineSeparators]),
-          let last = roster.matches(in: text,
-                                    range: NSRange(location: 0, length: ns.length)).last else {
-        cannot("hire: no roster entries to anchor on",
-               "hire writes beside an existing person, and the world has none")
-    }
-    let at = last.range.location + last.range.length
-    var out = ns.substring(to: at) + block + ns.substring(from: at)
-    // the corpus world carries a Company list; an imported one does not, and the
-    // judge needs none
-    let outNs = out as NSString
-    if let slice = try? NSRegularExpression(pattern: "(Emp\\w+\\.self;?)(?=\\s*\\n\\s*\\})"),
-       let s = slice.matches(in: out, range: NSRange(location: 0, length: outNs.length)).first {
-        let end = s.range.location + s.range.length
-        out = outNs.substring(to: end) + " \(said("id")).self;" + outNs.substring(from: end)
-    }
-    out = try lastEntryInsert(out, "VerifiedView", said("id"), said("home") + "Share", 12)
-    out = try lastEntryInsert(out, "VerifiedInDepartment", said("id"), said("home"), 8,
-                              anchoredOn: said("home"))
-    out = try lastEntryInsert(out, "VerifiedAtRank", said("id"), said("rank"), 8,
-                              anchoredOn: said("rank"))
-    out = try lastEntryInsert(out, "VerifiedAtWorkplace", said("id"), said("site"), 8,
-                              anchoredOn: said("site"))
-    return out
-}
-
 // ── AN ANSWER, BEFORE ANYBODY SAYS IT. Two surfaces ask these questions: the
 // terminal prints the answer and exits, the bench answers a request with it and
 // stays up. So the asking hands back what it found, and each surface says it in
@@ -5466,7 +7042,7 @@ func askViewAnswer(_ w: WorldState, _ who: String, _ doc: String) -> Answered {
     ])
 }
 
-// ── check view WHO DOC · check administer|delete WHO DOC. A question about one
+// ── check view WHO DOC. A question about one
 // entry: a probe is written beside the world's own entries and judged, and
 // nothing changes. `ask` is the same question spelled the other way, so it
 // travels with the verb.
@@ -5486,7 +7062,7 @@ if args.first == "check" || args.first == "ask" {
         exit(0)
     }
     if rest.isEmpty {
-        asked("check view WHO WHAT  ·  check administer WHO WHERE  ·  check delete WHO WHAT",
+        asked("check view WHO WHAT",
               "gate check view Emp0042 FinanceShare, with names your world declares "
               + "(`gate library` lists that vocabulary)")
     }
@@ -5519,71 +7095,11 @@ if args.first == "check" || args.first == "ask" {
         }
         exit(verdict == "holds" ? 0 : 1)
     }
-    if kind == "administer" || kind == "delete" {
-        // the compiler gates: a probe entry in the corpus's own accesses and a
-        // swift build. Seconds, and the full arbiter.
-        guard let root = ProcessInfo.processInfo.environment["GATE_CORPUS"], !root.isEmpty else {
-            cannot("check " + kind + " needs GATE_CORPUS (a checkout of the theory corpus "
-                   + "with Team.swift)",
-                   "set GATE_CORPUS to that checkout, or ask `gate check view` instead, "
-                   + "which needs none")
-        }
-        let asks = "gate check \(kind) Emp0042 FinanceVault, with names your world declares "
-                 + "(`gate library` lists that vocabulary)"
-        if tail.isEmpty {
-            asked("check \(kind) WHO WHAT  ·  the compiler is the arbiter, and it takes seconds",
-                  asks)
-        }
-        if tail.count < 2 { cannot("check \(kind) WHO WHAT: this names only " + tail[0], asks) }
-        let team = (((root as NSString).appendingPathComponent("Sources") as NSString)
-            .appendingPathComponent("Organization") as NSString)
-            .appendingPathComponent("System/Team.swift")
-        let text = readText(team) ?? ""
-        let anchor = "        Granted<Delete<Alice, FinanceVault>>.self         "
-                   + "// only the owner, and only at manager rank, deletes"
-        // the other carrier asserts this, which is a stack trace; a sentence
-        // says the same thing to a person who can act on it
-        if text.components(separatedBy: anchor).count - 1 != 1 {
-            cannot("the corpus checkout at GATE_CORPUS does not carry the line this probe "
-                   + "writes beside",
-                   "point GATE_CORPUS at a checkout whose Team.swift still states the "
-                   + "delete example, or ask `gate check view` instead")
-        }
-        let gateName = kind.prefix(1).uppercased() + kind.dropFirst()
-        let probe = text.replacingOccurrences(
-            of: anchor,
-            with: anchor + "\n        Granted<\(gateName)<\(tail[0]), \(tail[1])>>.self // gate probe")
-        try? probe.write(toFile: team, atomically: false, encoding: .utf8)
-        let t0 = Date()
-        let built = runSaid("swift build", [])
-        let secs = (Date().timeIntervalSince(t0) * 100).rounded() / 100
-        _ = runGit(["checkout", "--", team], root)
-        var reasons = Set<String>()
-        for m in matches("error: (.+)$", built.said, lines: true) { reasons.insert(m[0]) }
-        let says = Array(reasons.sorted().prefix(3))
-        let verdict = built.code == 0 ? "holds" : "refused"
-        if asJson {
-            out(statusDumps(.object([
-                ("command", .text("ask \(kind)")), ("who", .text(tail[0])),
-                ("doc", .text(tail[1])), ("verdict", .text(verdict)),
-                ("compiler_says", .list(says.map { .text($0) })),
-                ("build_s", .raw(String(secs))),
-                ("mutates", .raw("false")),
-            ]), 0) + "\n")
-        } else {
-            var lines = ["ask \(kind): " + (verdict == "holds" ? "holds" : "refused 0")
-                         + " · build \(secs) s"]
-            for s in says { lines.append("  compiler: " + s) }
-            out(lines.joined(separator: "\n") + "\n")
-        }
-        exit(verdict == "holds" ? 0 : 1)
-    }
-    asked("check view WHO WHAT  ·  check administer WHO WHERE  ·  check delete WHO WHAT",
-          "gate check view Emp0042 FinanceShare, with names your world declares "
-          + "(`gate library` lists that vocabulary)")
+    cannot("unknown check " + kind,
+           "gate check view WHO WHAT, with names your world declares")
 }
 
-// ── diff transfer WHO DEPT · diff hire … · apply the same words. The SINGLE
+// ── diff transfer|grant|revoke · apply the same words. The SINGLE
 // source, the world, is edited, and the diff stays a Swift git diff. `change` is
 // the third spelling of one act and travels with the two doors.
 // the change itself, assembled once for both surfaces: what the world would say
@@ -5627,19 +7143,10 @@ func changeAnswer(_ w: WorldState, _ facts: String, _ rest: [String],
         catch { return .cannot(note: "this change could not be written", next: nil) }
         label = [("command", .text("change revoke")), ("who", .text(rest[1])),
                  ("doc", .text(rest[2]))]
-    case "hire":
-        let keys = ["id", "rank", "home", "given", "family", "born", "site"]
-        var f: [String: String] = [:]
-        for (i, k) in keys.enumerated() where i + 1 < rest.count { f[k] = rest[i + 1] }
-        do { made = try hireText(text, f) }
-        catch let e as CannotSay { return .cannot(note: e.note, next: e.next) }
-        catch { return .cannot(note: "this change could not be written", next: nil) }
-        label = [("command", .text("change hire"))]
-            + keys.compactMap { k in f[k].map { (k, StatusJSON.text($0)) } }
     default:
         return .cannot(note: "unknown change " + rest[0],
-                       next: "the changes this verb makes are `transfer`, `hire`, `grant` "
-                           + "and `revoke`")
+                       next: "the changes this verb makes are `transfer`, `grant` and `revoke`; "
+                           + "edit the world file for other changes")
     }
     let said = judgeFile(withTemp(made, (facts as NSString).lastPathComponent))
     // ── AND `applied` MEANS SOMETHING CHANGED. A transfer to the department
@@ -5675,8 +7182,8 @@ if args.first == "diff" || args.first == "apply" || args.first == "change" {
                + "at. A world declared as a layout alone is judged by `gate status`")
     }
     if rest.isEmpty {
-        let note = "diff transfer WHO DEPT  ·  diff hire ID RANK HOME GIVEN FAMILY "
-                 + "BORN SITE  ·  the same words after `apply` write the change"
+        let note = "diff transfer WHO DEPT  ·  diff grant|revoke WHO DOC  ·  "
+                 + "the same words after `apply` write the change"
         let next = "gate diff transfer Emp0042 Sales shows what would move and what "
                  + "would stop holding, and writes nothing"
         if asJson {
@@ -5751,7 +7258,8 @@ func selfSaid(_ words: [String], _ cwd: String) -> String {
     let pipe = Pipe(), quiet = Pipe()
     p.standardOutput = pipe
     p.standardError = quiet
-    do { try p.run() } catch {
+    let done: DispatchSemaphore
+    do { done = try startProcess(p) } catch {
         cannot("this tool could not run itself at " + bin + " in " + cwd
                + ": " + error.localizedDescription,
                "the binary is there and this is the same one that is speaking, "
@@ -5759,7 +7267,7 @@ func selfSaid(_ words: [String], _ cwd: String) -> String {
     }
     let said = pipe.fileHandleForReading.readDataToEndOfFile()
     let complained = quiet.fileHandleForReading.readDataToEndOfFile()
-    waitDone(p)
+    done.wait()
     // ── AND THE CODE THE CHILD LEFT WITH IS KEPT. A child that printed on
     // neither channel says everything through this number and nothing without
     // it: on windows the import above answered nought characters on both, and
@@ -5785,123 +7293,32 @@ func selfSaid(_ words: [String], _ cwd: String) -> String {
     return answer
 }
 
-let SEAM_DEMO_SPEC = """
-    {
-     "paths": {
-      "/messages": {
-       "post": {
-        "parameters": [
-         {
-          "name": "sendAt",
-          "in": "query",
-          "schema": {
-           "type": "string"
-          }
-         }
-        ],
-        "requestBody": {
-         "content": {
-          "application/json": {
-           "schema": {
-            "properties": {
-             "to": {
-              "type": "string"
-             },
-             "body": {
-              "type": "string"
-             },
-             "attachments": {
-              "type": "array"
-             }
-            }
-           }
-          }
-         }
-        }
-       }
-      }
-     }
-    }
-    """
 
-let SEAM_DEMO_SDK = """
-    {
-     "carrier": "MessagesJS",
-     "against": {
-      "contract": "openapi.json",
-      "revision": "a1b2c3d"
-     },
-     "carries": [
-      {
-       "route": "/messages",
-       "field": "to",
-       "as": "Text"
-      },
-      {
-       "route": "/messages",
-       "field": "body",
-       "as": "Text"
-      },
-      {
-       "route": "/messages",
-       "field": "sendAt",
-       "as": "Count"
-      },
-      {
-       "route": "/messages",
-       "field": "replyTo",
-       "as": "Text"
-      }
-     ]
-    }
-    """
 
-let SEAM_DEMO_KNOWN = """
-    {
-     "diverges": [
-      {
-       "route": "/messages",
-       "field": "sendAt",
-       "because": "PROJ-42",
-       "declared_by": "sdk-team"
-      }
-     ]
-    }
-    """
 
-let SEAM_DEMO_TICKETS = """
-    [
-     {
-      "key": "PROJ-42",
-      "status": "In Progress"
-     }
-    ]
-    """
 
-let SEAM_DEMO_MANIFEST = """
-    // what this folder took, and from where. A seam is not found by looking
-    // at what is lying about: it is here because this side said so, at the
-    // revision it was taken at. The columns are axes to declared atoms, and
-    // the one string is the typeName literal. A revision is an atom too.
-    public protocol Role {}
-    public enum SeamFile: Role {}
-    public protocol Theirs {}
-    public enum Rev_messages_api {}
-    extension Rev_messages_api { public static var typeName: String { "messages-api@a1b2c3d" } }
-    public enum TheContract: Theirs {
-        public typealias Kind = SeamFile
-        public typealias At = Rev_messages_api
-    }
-    extension TheContract { public static var typeName: String { "api.swift" } }
-    public enum Rev_messages_js {}
-    extension Rev_messages_js { public static var typeName: String { "messages-js@4f10e22" } }
-    public enum OurSide: Theirs {
-        public typealias Kind = SeamFile
-        public typealias At = Rev_messages_js
-    }
-    extension OurSide { public static var typeName: String { "sdk.swift" } }
 
-    """
+// Examples are selected recipes. The verbs below still own init, import and status.
+func exampleText(_ name: String) -> String {
+    guard let bytes = runtimeData("examples/" + name), let text = String(data: bytes, encoding: .utf8) else {
+        cannot("examples/" + name + ": missing example input", "restore the installed example, then gate demo")
+    }
+    return text
+}
+func installExample(_ name: String, _ root: String) {
+    guard let bytes = runtimeData("examples/index.json"),
+          let recipes = try? JSONSerialization.jsonObject(with: bytes) as? [String: [String]],
+          let files = recipes[name] else {
+        cannot("examples/index.json: no recipe " + name, "restore the installed examples, then gate demo")
+    }
+    for file in files {
+        let target = joinPath(root, file)
+        do {
+            try FileManager.default.createDirectory(atPath: parentPath(target)!, withIntermediateDirectories: true)
+            try exampleText(name + "/" + file).write(toFile: target, atomically: true, encoding: .utf8)
+        } catch { cannot("examples/" + name + "/" + file + ": " + String(describing: error), "choose a writable example directory") }
+    }
+}
 
 // ── demo [dir] · demo org [dir] · demo seam [dir]: three worlds to look at in
 // thirty seconds, and nothing in any of them talks to a network. The first is
@@ -5942,11 +7359,7 @@ if args.first == "demo" {
         let root = absPath(rest.count > 1 ? rest[1] : "gate-seam-demo")
         if !FileManager.default.fileExists(atPath: root) { FOUNDED_HERE = root }
         try? FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
-        put(root, "openapi.json", SEAM_DEMO_SPEC)
-        put(root, "sdk.declared.json", SEAM_DEMO_SDK)
-        put(root, "known.json", SEAM_DEMO_KNOWN)
-        put(root, "tickets.json", SEAM_DEMO_TICKETS)
-        put(root, "gate.manifest.swift", SEAM_DEMO_MANIFEST)
+        installExample("seam", root)
         func side(_ what: String, _ from: String, _ to: String) -> Int {
             let said = selfSaid(["declare", what, (root as NSString).appendingPathComponent(from),
                                  "-o", (root as NSString).appendingPathComponent(to), "--json"],
@@ -5992,24 +7405,13 @@ if args.first == "demo" {
 
     // ── demo org
     if rest.first == "org" {
-        // the tool's own folder, asked for by name: the demo's `root` is the
-        // world it is making, and the two are not the same place
-        let mine = toolRoot()
+        // The selected recipe is data; import still owns the world it declares.
         let root = absPath(rest.count > 1 ? rest[1] : "gate-demo")
         if !FileManager.default.fileExists(atPath: root) { FOUNDED_HERE = root }
         try? FileManager.default.createDirectory(
             atPath: (root as NSString).appendingPathComponent("tables"),
             withIntermediateDirectories: true)
-        for f in ["people.csv", "grants.csv"] {
-            let src = joinPath(mine, "demo/" + f)
-            if FileManager.default.fileExists(atPath: src) {
-                try? FileManager.default.removeItem(
-                    atPath: (root as NSString).appendingPathComponent("tables/" + f))
-                try? FileManager.default.copyItem(
-                    atPath: src,
-                    toPath: (root as NSString).appendingPathComponent("tables/" + f))
-            }
-        }
+        installExample("organization", root)
         var isDir: ObjCBool = false
         if !(FileManager.default.fileExists(atPath: (root as NSString)
             .appendingPathComponent(".git"), isDirectory: &isDir) && isDir.boolValue) {
@@ -6056,12 +7458,6 @@ if args.first == "demo" {
                     + "{ \"gate-judge\" } }\n"
             try? (head + row).write(toFile: mp, atomically: false, encoding: .utf8)
         }
-        put(root, "gate.policy.swift",
-            "// who someone is, and what an action demands: facts of yours,\n"
-            + "// beside the world and yours to change.\n"
-            + "public enum MailYou: Identity {\n    public typealias Person = Emp9000\n}\n"
-            + "extension MailYou { public static var typeName: String { \"you@example.com\" } }\n\n"
-            + "public enum MergePolicy {\n    public typealias Requires = Manager\n}\n")
         commit(root, "a world of people and grants", false)
         var shown: [String] = []
         let asked = readSaid(selfSaid(["check", "view", "Emp9001", "EngineeringShare", "--json"],
@@ -6098,20 +7494,7 @@ if args.first == "demo" {
     // ── demo: who owns what, in a repository shaped like the reader's own
     let root = absPath(rest.first ?? "gate-demo")
     if !FileManager.default.fileExists(atPath: root) { FOUNDED_HERE = root }
-    for rel in ["src/api", "src/ui", "src/db", "docs"] {
-        try? FileManager.default.createDirectory(
-            atPath: (root as NSString).appendingPathComponent(rel),
-            withIntermediateDirectories: true)
-    }
-    for rel in ["src/api/handler.ts", "src/ui/view.tsx", "src/db/schema.sql", "docs/readme.md"] {
-        put(root, rel, "// a file of this repository\n")
-    }
-    put(root, "CODEOWNERS",
-        "# who owns what, the way every repository already writes it\n"
-        + "src/api/    @alice\nsrc/ui/     @bob\ndocs/       @carol\nsrc/db/     @carol\n")
-    // WHO MAY OWN WHAT is the thing CODEOWNERS cannot say, and without it every
-    // rule is its own authority: a file that answers only to itself
-    put(root, "owners.csv", "owner,zone\nalice,src\nbob,src\ncarol,docs\n")
+    installExample("codeowners", root)
     _ = runGit(["init", "-q", "-b", "main", "."], root)
     _ = selfSaid(["init", "."], root)
     // ── AND WHAT THE CHILD IS TOLD IS WHERE, NOT HERE. These were relative and
@@ -6995,10 +8378,10 @@ if args.first == "import" {
         let notes = lawNotes([world])
         mark("notes-built")
         var refusals: [(certificate: String, source: String, address: String, claim: String)] = []
-        for (cert, claim) in whereRefused(outp) {
+        for (cert, _, presentation) in plainWhereRefusals(outp, notes) {
             guard let cert = cert, let source = srcmap[cert] else { continue }
             refusals.append((cert, source, source.components(separatedBy: " · ")[0],
-                             plainly(claim, notes)))
+                             presentation))
         }
         // a pattern matching no file in the tree: CODEOWNERS says it, the tree does not
         var ghosts: [(address: String, claim: String)] = []
@@ -7135,7 +8518,7 @@ if args.first == "import" {
                     + (ghosts + unread + noise).map {
                     .object([("address", .text($0.address)), ("claim", .text($0.claim))]) })),
                 ("judge_ms", .raw(String(ms))),
-                ("canon_handshake", .raw(outp.contains("canon v2") ? "true" : "false")),
+                ("canon_handshake", .raw(outp.contains("canon v4") ? "true" : "false")),
                 ("note", .text(note2)),
                 ("next", .text(next)),
             ]
@@ -7306,7 +8689,7 @@ if args.first == "import" {
                              ("address", .text($0.address)),
                              ("claim", .text($0.claim))]) })),
                 ("judge_ms", .raw(String(ms))),
-                ("canon_handshake", .raw(outp.contains("canon v2") ? "true" : "false")),
+                ("canon_handshake", .raw(outp.contains("canon v4") ? "true" : "false")),
                 ("note", .text(note)),
             ]), 0) + "\n")
         } else {
@@ -8302,6 +9685,7 @@ if args.first == "survey" {
         fabric = [("facts", .text(facts)),
                   ("verdict", .text(said.verdict)),
                   ("refusals", .raw(String(said.refusals.count)))]
+        if !said.unsupported.isEmpty { fabric.append(("unsupported", formResidueJSON(said.unsupported))) }
     }
     let next = hasWorld
         ? "run `gate status`: these are candidates from your history, and a world is what holds them"
@@ -8455,10 +9839,11 @@ func gitShow(_ spec: String, _ root: String) -> String? {
     let pipe = Pipe(), quiet = Pipe()
     p.standardOutput = pipe
     p.standardError = quiet
-    do { try p.run() } catch { return nil }
+    let done: DispatchSemaphore
+    do { done = try startProcess(p) } catch { return nil }
     let said = pipe.fileHandleForReading.readDataToEndOfFile()
     quiet.fileHandleForReading.readDataToEndOfFile()
-    waitDone(p)
+    done.wait()
     if p.terminationStatus != 0 { return nil }
     return String(data: said, encoding: .utf8) ?? ""
 }
@@ -8551,7 +9936,8 @@ if args.first == "badge" {
     }
     let holds = said.verdict == "holds"
     let claims: Int
-    if files.isEmpty { claims = said.whereSize["equalities"] ?? 0 }
+    // a count reading is a judged claim as an equality is: both are counted
+    if files.isEmpty { claims = formsChecked(said.whereSize) }
     else if let m = said.world, m.count == 3 { claims = Int(m[2]) ?? 0 }
     else { claims = 0 }
     let here = FileManager.default.currentDirectoryPath
@@ -8609,16 +9995,22 @@ if args.first == "badge" {
     // green is, and on a red world there is no green to be wide: it says how
     // many were refused, which is the number that is true then.
     let right = (holds ? many(claims, "claim") + " · holds"
-                       : "refused \(said.refusals.count)")
+        : (said.refusals.isEmpty ? (said.verdict == "empty" ? outcomeLabel(said.verdict)
+                                     : said.verdict + " · \(said.unsupported.count) unsupported")
+                                : "refused \(said.refusals.count)"))
         + (days.map { " · \($0)d" } ?? "")
     if let path = outPath {
         let lw = 40, rw = 8 + Int(Double(right.count) * 6.2)
         var svg = BADGE_SVG
         for (k, v) in [("{w}", String(lw + rw)), ("{lw}", String(lw)), ("{rw}", String(rw)),
                        ("{tx}", String(lw + 5)), ("{right}", escXml(right)),
-                       ("{fill}", holds ? "#007D36" : "#BF4035"),
+                       ("{fill}", holds ? "#007D36" : (said.refusals.isEmpty ? "#8A6500" : "#BF4035")),
                        ("{alt}", escXml("gate: " + right))] {
             svg = svg.replacingOccurrences(of: k, with: v)
+        }
+        if !said.unsupported.isEmpty {
+            let remainder = said.unsupported.map { $0.id + ": " + $0.reason }.joined(separator: "; ")
+            svg = svg.replacingOccurrences(of: "</svg>", with: "<title>" + escXml(remainder) + "</title></svg>")
         }
         oursWrite(path, "the badge", svg)
     }
@@ -8640,7 +10032,7 @@ if args.first == "badge" {
         var pairs: [(String, StatusJSON)] = [
             ("command", .text("badge")),
             ("claims", .raw(String(claims))),
-            ("verdict", .text(holds ? "holds" : "refused")),
+            ("verdict", .text(said.verdict)),
             ("commits_judged", .raw(String(judged))),
             ("unbroken_days", days.map { .raw(String($0)) } ?? .null),
             ("last_refusal", broke.map { .text($0) } ?? .null),
@@ -8652,13 +10044,16 @@ if args.first == "badge" {
             ("next", .text(next)),
             ("mutates", .raw(outPath != nil ? "true" : "false")),
         ]
+        if said.verdict == "empty" { pairs.append(("reason", .text(EMPTY_FORMS_REASON))) }
+        if !said.unsupported.isEmpty { pairs.append(("unsupported", formResidueJSON(said.unsupported))) }
         if let ready = commandIn(next) { pairs.append(("command_to_run", .text(ready))) }
         out(statusDumps(.object(pairs), 0) + "\n")
     } else {
+        let remainder = said.unsupported.map { "\n  " + $0.address + " · unsupported " + $0.id + ": " + $0.reason }.joined()
         out("badge: " + right + (outPath.map { " · wrote \($0)" } ?? "")
-            + "\n  note: " + note + "\n  next: " + next + "\n")
+            + remainder + "\n  note: " + note + "\n  next: " + next + "\n")
     }
-    exit(holds ? 0 : 1)
+    exit(holds ? 0 : (said.refusals.isEmpty ? 2 : 1))
 }
 
 // and the verb itself, now that the bootstrap it stood on is here. `fsck` is
@@ -8666,7 +10061,7 @@ if args.first == "badge" {
 // carrier answers both from one branch and names the answer `status` either
 // way, so a spelling left behind would be one word answered by two carriers.
 if args.first == "status" || args.first == "fsck" {
-    statusDoor(args.contains("--json"))
+    statusDoor(args.contains("--json"), forCommit: args.contains("--hook"))
 }
 
 // ── my: your personal world, where it is, and its verdict WITH the shared
@@ -8735,26 +10130,33 @@ if args.first == "my" {
     // `holds`, which is the one command a person runs about the file that
     // carries the second one.
     let sources = oneStream(w, named).map { ($0.0, readText($0.1) ?? "") }
-    refusals += duplicateGuardsOver(sources)
+    refusals += duplicateGuardsOver(grammarIndependentSources(w, sources))
     refusals += entryGuardsOver(sources)
     var whereSize: [String: Int] = [:]
-    refusals += formsGuards(w, &whereSize)   // the forms half, by the court that reads it
+    var unsupported: [FormResidue] = []
+    refusals += formsGuards(w, &whereSize, unsupported: &unsupported)
+    let outcome = formsOutcome(refusals.count, unsupported,
+        formsChecked(whereSize) + (raw.contains("THE JUDGE holds") ? 1 : 0))
     if asJson {
-        out(statusDumps(.object([
+        var pairs: [(String, StatusJSON)] = [
             ("command", .text("my")),
             ("personal", .text(personal)),
             ("repo_key", .text(key)),
             ("shared_repo_untouched", .raw("true")),
-            ("verdict", .text(refusals.isEmpty ? "holds" : "refused")),
+            ("verdict", .text(outcome)),
             ("refusals", .list(refusals.map {
                 .object([("address", .text($0.address)), ("claim", .text($0.claim))]) })),
-        ]), 0) + "\n")
+        ]
+        if outcome == "empty" { pairs.append(("reason", .text(EMPTY_FORMS_REASON))) }
+        if !unsupported.isEmpty { pairs.append(("unsupported", formResidueJSON(unsupported))) }
+        out(statusDumps(.object(pairs), 0) + "\n")
     } else {
-        var lines = ["my: " + (refusals.isEmpty ? "holds" : "refused \(refusals.count)")]
+        var lines = ["my: " + (refusals.isEmpty ? outcomeLabel(outcome) : "refused \(refusals.count)")]
         for r in refusals { lines.append("  \(r.address) · \(r.claim)") }
+        for r in unsupported { lines.append("  \(r.address) · unsupported \(r.id): \(r.reason)") }
         out(lines.joined(separator: "\n") + "\n")
     }
-    exit(refusals.isEmpty ? 0 : 1)
+    exit(!refusals.isEmpty ? 1 : (outcome == "holds" ? 0 : 2))
 }
 
 // ── declare contract SPEC [-o F] · declare carrier DECL.json [-o F]
@@ -9162,7 +10564,7 @@ func contractRevisions(_ path: String, _ since: String?) -> (root: String?, revs
     p.standardInput = put
     p.standardOutput = got
     p.standardError = Pipe()
-    guard (try? p.run()) != nil else { return (rootDir, []) }
+    guard let done = try? startProcess(p) else { return (rootDir, []) }
     let asked = marks.map { "\($0.0):\(rel)" }.joined(separator: "\n")
     // written on its own queue, the way communicate does: a batch bigger than
     // the pipe would deadlock a writer who waits to read
@@ -9171,7 +10573,7 @@ func contractRevisions(_ path: String, _ since: String?) -> (root: String?, revs
         put.fileHandleForWriting.closeFile()
     }
     let blob = got.fileHandleForReading.readDataToEndOfFile()
-    waitDone(p)
+    done.wait()
     var out: [(String, Data)] = []
     var i = 0
     for (_, when) in marks {
@@ -9238,7 +10640,7 @@ func firstMentions(_ rootDir: String, _ names: [String],
     let got = Pipe()
     p.standardOutput = got
     p.standardError = Pipe()
-    guard (try? p.run()) != nil else { return seen }
+    guard let done = try? startProcess(p) else { return seen }
     var when: String? = nil
     var carry = Data()
     let handle = got.fileHandleForReading
@@ -9265,6 +10667,7 @@ func firstMentions(_ rootDir: String, _ names: [String],
     }
     p.terminate()
     handle.closeFile()
+    done.wait()
     return seen
 }
 
@@ -9517,12 +10920,12 @@ if args.first == "drift" {
 // arrive by the same verb everything arrives by, the hook wires itself where
 // a .git stands, and --vendor makes the tool travel with the repository.
 let INIT_HOOK = "#!/bin/sh\n"
-    + "# the claims must hold before a commit is made (they are judged, never reprinted)\n"
-    + "if [ -x ./gatew ]; then exec ./gatew status; fi\n"
+    + "# refusals stop a commit; an addressed unsupported remainder is printed and kept\n"
+    + "if [ -x ./gatew ]; then exec ./gatew status --hook; fi\n"
     + "# a clone carries the tool at ./gate, which is the way the cover says to run it\n"
     + "# (\"no install step\"), so the hook looks there before it looks for an install\n"
-    + "if [ -x ./gate ]; then exec ./gate status; fi\n"
-    + "if command -v gate >/dev/null 2>&1; then exec gate status; fi\n"
+    + "if [ -x ./gate ]; then exec ./gate status --hook; fi\n"
+    + "if command -v gate >/dev/null 2>&1; then exec gate status --hook; fi\n"
     + "echo \"pre-commit: gate is not on PATH and there is no ./gatew here, so nothing\"\n"
     + "echo \"checked the claims in this repository. Put gate on PATH, run\"\n"
     + "echo \"gate init . --vendor to carry it here, or delete .githooks/pre-commit.\"\n"
@@ -9585,7 +10988,7 @@ func vendorInto(_ rootDir: String) -> (carried: [String], digest: String?, shim:
     if FileManager.default.fileExists(atPath: pcli) {
         copyItem(pcli, (dst as NSString).appendingPathComponent("bin/judge-cli.js"))
     }
-    for sub in ["web", "docs"] {
+    for sub in ["web", "docs", "bin/court-wasm/node"] {
         try? FileManager.default.createDirectory(
             atPath: (dst as NSString).appendingPathComponent(sub),
             withIntermediateDirectories: true)
@@ -9595,8 +10998,10 @@ func vendorInto(_ rootDir: String) -> (carried: [String], digest: String?, shim:
     // that is what a repository takes in hand. The node port travels with it
     // because the bench's parse route is still asked of it, and because a
     // platform this binary was not built for still has a court that way.
-    for rel in ["bin/judge.js", "bin/judge-where.js", "web/ui.html",
-                "web/codemirror.js", "web/codemirror.css", "LICENSE", "docs/NOTICE.md"] {
+    for rel in ["bin/judge.js", "bin/judge-wasm.js", "bin/court-wasm.from",
+                "bin/court-wasm/node/vi_court.js", "bin/court-wasm/node/vi_court_bg.wasm",
+                "bin/renderer.js", "bin/press.js", "bin/drawing.from", "bin/press-contract.from", "bin/renderer-security.patch",
+                "web/ui.html", "web/codemirror.js", "web/codemirror.css", "LICENSE", "docs/NOTICE.md"] {
         let src = (here as NSString).appendingPathComponent(rel)
         if FileManager.default.fileExists(atPath: src) {
             copyItem(src, (dst as NSString).appendingPathComponent(rel))
@@ -9638,6 +11043,19 @@ func vendorInto(_ rootDir: String) -> (carried: [String], digest: String?, shim:
         if FileManager.default.fileExists(atPath: jsrc + ".from") {
             copyItem(jsrc + ".from", jdst + ".from")
             carried.append("bin/gate-judge.from")
+        }
+    }
+    // and the company's plain court beside it, built from the showcase at its
+    // own pin: a carried copy takes every native court this tool speaks with
+    let osrc = (here as NSString).appendingPathComponent("bin/organization-judge")
+    if FileManager.default.fileExists(atPath: osrc) {
+        let odst = (dst as NSString).appendingPathComponent("bin/organization-judge")
+        copyItem(osrc, odst)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: odst)
+        carried.append("bin/organization-judge")
+        if FileManager.default.fileExists(atPath: osrc + ".from") {
+            copyItem(osrc + ".from", odst + ".from")
+            carried.append("bin/organization-judge.from")
         }
     }
     let shim = (rootDir as NSString).appendingPathComponent("gatew")
@@ -10435,10 +11853,65 @@ if args.first == "export" {
 // went red on the linux job already. So the wrapper stays the road everywhere it
 // has not been measured. Both roads are held to the python side's bytes by the
 // parity walk, which runs wherever a toolchain stands, so neither can drift.
-func courtSays(_ asked: [String]) -> String {
+// AND A REFUSAL TO READ IS AN ANSWER, SAID ON THE COURT'S OTHER CHANNEL. The
+// certificate court at canon four answers exit 2 in two ways, and only its
+// stderr tells them apart: a world with no gate asked it nothing ("no equalities
+// or memberships were judged; no certificate established"), and a file it could
+// not read ("cannot read 'Reads': it is declared at lines 238 and 284"). With
+// stderr dropped both arrived here as silence, and silence is what canonGuard
+// names as a court that did not sit. So a `where` that exits 2 hands its stderr
+// back with its stdout, which is the whole answer the court's CLI contract
+// (vi.court.cli-text/1) gives: exit, stdout and stderr.
+// (a static, not a top-level let: this file is main.swift, where a top-level let
+// is set only when the run reaches its line, and the run starts far above it)
+enum WhereAnswer {
+    static let nothingAsked = "✗ THE WHERE: no equalities or memberships were judged; no certificate established"
+}
+
+func courtSays(_ asked: [String], wholeCompany: Bool = false) -> String {
     spawnCounted("court")
+    let keepsRefusal = asked.first == "where" || asked.first == "count"
     let bin = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path
-    let words: [String] = [bin, "judge"] + asked
+    var supplied = asked
+    var projected: String? = nil
+    var companyLines: [(path: String, start: Int, count: Int)] = []
+    // WorldFile parts present one company. The court's raw multi-file door
+    // checks successive prefixes; this reader asks once about the full set.
+    if wholeCompany && supplied.count > 1 {
+        let texts = supplied.compactMap { readText($0) }
+        if texts.count == supplied.count {
+            let named = benchFilesOf(discoverWorld())
+            let sourceNames = Dictionary(named.map { (canonicalPath($0.1), $0.0) },
+                                         uniquingKeysWith: { first, _ in first })
+            let liveNames = Dictionary(named.map { ($0.0.replacingOccurrences(of: "/", with: "__"), $0.0) },
+                                       uniquingKeysWith: { first, _ in first })
+            var start = 1
+            for (path, text) in zip(asked, texts) {
+                let name = sourceNames[canonicalPath(path)]
+                    ?? liveNames[(path as NSString).lastPathComponent] ?? path
+                let count = text.components(separatedBy: "\n").count
+                companyLines.append((name, start, count))
+                start += count
+            }
+            if projected == nil { projected = scratchDir("gate-company-") }
+            let target = joinPath(projected!, "gate-company-stream.swift")
+            try? texts.joined(separator: "\n").write(toFile: target, atomically: false, encoding: .utf8)
+            supplied = [target]
+        }
+    }
+    func addressed(_ answer: String) -> String {
+        guard !companyLines.isEmpty,
+              let pattern = try? NSRegularExpression(pattern: "gate-company-stream\\.swift:([0-9]+)") else { return answer }
+        let source = answer as NSString, result = NSMutableString(string: answer)
+        for hit in pattern.matches(in: answer, range: NSRange(location: 0, length: source.length)).reversed() {
+            guard let line = Int(source.substring(with: hit.range(at: 1))),
+                  let part = companyLines.first(where: { line >= $0.start && line < $0.start + $0.count }) else { continue }
+            result.replaceCharacters(in: hit.range, with: part.path + ":\(line - part.start + 1)")
+        }
+        return result as String
+    }
+    defer { if let d = projected { try? FileManager.default.removeItem(atPath: d) } }
+    let words: [String] = [bin, "judge"] + supplied
 #if canImport(Darwin)
     var fds: [Int32] = [0, 0]
     guard pipe(&fds) == 0 else { return "" }
@@ -10448,7 +11921,9 @@ func courtSays(_ asked: [String]) -> String {
     // the court's stderr is captured and dropped, the way the other carrier's
     // judge_call captures both channels: a court asked about nothing says so
     // on stderr, and that sentence is the caller's to keep or to swallow
-    let quiet = open("/dev/null", O_WRONLY)
+    let errPath = tempRoot() + "gate-court-\(ProcessInfo.processInfo.processIdentifier)-\(UInt32.random(in: 0...UInt32.max)).err"
+    let quiet = keepsRefusal ? open(errPath, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
+                             : open("/dev/null", O_WRONLY)
     if quiet >= 0 { posix_spawn_file_actions_adddup2(&actions, quiet, 2) }
     posix_spawn_file_actions_addclose(&actions, fds[0])
     var argv: [UnsafeMutablePointer<CChar>?] = words.map { strdup($0) }
@@ -10469,21 +11944,32 @@ func courtSays(_ asked: [String]) -> String {
     }
     close(fds[0])
     if quiet >= 0 { close(quiet) }
-    guard started == 0 else { return "" }
+    guard started == 0 else {
+        if keepsRefusal { unlink(errPath) }
+        return ""
+    }
     var status: Int32 = 0
     waitpid(child, &status, 0)
-    return String(data: said, encoding: .utf8) ?? ""
+    let out = addressed(String(data: said, encoding: .utf8) ?? "")
+    guard keepsRefusal else { return out }
+    let err = readText(errPath) ?? ""
+    unlink(errPath)
+    // exited normally with 2: the status word keeps the code in its second byte
+    let exited = (status & 0x7f) == 0 ? (status >> 8) & 0xff : -1
+    return exited == 2 ? out + err : out
 #else
     let p = Process()
     p.executableURL = URL(fileURLWithPath: bin)
     p.arguments = Array(words.dropFirst())
     let pipe = Pipe()
+    let errPipe = Pipe()
     p.standardOutput = pipe
-    p.standardError = Pipe()
-    guard (try? p.run()) != nil else { return "" }
-    let said = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-    waitDone(p)
-    return said
+    p.standardError = errPipe
+    guard let done = try? startProcess(p) else { return "" }
+    let said = addressed(String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
+    let err = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    done.wait()
+    return keepsRefusal && p.terminationStatus == 2 ? said + err : said
 #endif
 }
 
@@ -10662,10 +12148,16 @@ if args.first == "seam" {
 //   GET  /codemirror.css       the editor's own stylesheet, carried here
 //   GET  /codemirror.js        the editor, carried here: nothing is fetched
 //   GET  /diff/transfer        what a change would do, and nothing done
+//   GET  /drawing-fonts.json   supported drawing font and metrics identities
+//   GET  /drawing-profile      declared profile inputs and their hashes
+//   GET  /drawing-profile.js   the profile reader shared by drawing consumers
 //   GET  /files                the world's files, their roles and verdicts
 //   GET  /gitstatus            what git says about this working copy
 //   GET  /judge.js             the ported court, for the page to judge with
+//   GET  /renderer.js          the kit's span engine on JS, for the drawing view
+//   GET  /press.js             the kit's rule applier on JS, for a key on a drawing
 //   GET  /ladder.css           the ladder and the palette, as this world says
+//   GET  /grammar-contexts     source identities, namespace and pinned scope coverage
 //   GET  /language             the grammar the page highlights and offers by
 //   GET  /log                  the journal of this world
 //   GET  /seamside             one side of a seam, read-only
@@ -10742,7 +12234,7 @@ func jsonStringASCII(_ s: String) -> String {
 // it there. A literal here would be a second copy of one number, which is the
 // registry's kind 9 written by hand; when that file goes, the declaration moves
 // with it and this reads wherever it lands.
-let VERSION = "0.2.3"
+let VERSION = "0.2.5"
 
 func gateVersion() -> String {
     return VERSION
@@ -10790,14 +12282,22 @@ public enum MyBench: Bench {
 // must know as grammar: it cannot count without them, so knowing them here is
 // the one place a name may sit inside a tool by right. Everything else a world
 // says is presented rather than built in.
-let LANGUAGE_AT: [(String, Int)] = [("Unit", 283), ("Plus", 287), ("Times", 303), ("Twice", 299), ("Paired", 227), ("Close", 88), ("Open", 87), ("Structure", 86)]
+// The lines are read off the corpus's Primitive at the judge's pin, the file
+// this binary carries (PinnedCorpus), never written here: a number about
+// somebody else's file is a claim nothing checks.
+let LANGUAGE_WORDS = ["Unit", "Plus", "Times", "Twice", "Paired", "Close", "Open", "Structure"]
 let LANGUAGE_FILE = "Sources/VerificationIsIdentification/Primitive.swift"
-// what the court itself is, by name: the two files that decide every verdict
-// this tool prints
-let COURT_FILES = ["Sources/Tools/Judge.swift", "Sources/Tools/WhereJudge.swift"]
+// the court is the corpus's Sources/Court, every file of it: the files
+// bin/build-cli.sh compiles in at the pin, listed from the checkout and not here
+let COURT_DIR = "Sources/Court"
 
 func languageNames() -> [(String, Int)] {
-    return LANGUAGE_AT
+    let lines = PinnedCorpus.primitive.components(separatedBy: "\n")
+    return LANGUAGE_WORDS.compactMap { word in
+        lines.firstIndex(where: {
+            matchAt($0, "public (?:enum|protocol|typealias|struct) " + word + "\\b") != nil
+        }).map { (word, $0 + 1) }
+    }
 }
 
 func languageFile() -> String {
@@ -10810,7 +12310,10 @@ func languageFile() -> String {
 func courtShape() -> StatusJSON {
     guard let root = ProcessInfo.processInfo.environment["GATE_CORPUS"], !root.isEmpty
     else { return .null }
-    let files = COURT_FILES
+    let dir = (root as NSString).appendingPathComponent(COURT_DIR)
+    guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return .null }
+    let files = names.filter { $0.hasSuffix(".swift") }.sorted().map { COURT_DIR + "/" + $0 }
+    if files.isEmpty { return .null }
     var lines = 0
     var seen: [StatusJSON] = []
     for rel in files {
@@ -10880,21 +12383,21 @@ func personalRootPath() -> String {
 // anything, so there is nothing to keep. It lives in a git of its own, in the
 // operator's home, never in the shared clone: colleagues and CI do not have it,
 // and privacy here is the repository boundary rather than a policy.
-func writePersonal(_ w: WorldState, _ text: String) {
+func writePersonal(_ w: WorldState, _ text: String) throws {
     guard let p = personalPathOf(w) else { return }
     let said = text.trimmingCharacters(in: .whitespacesAndNewlines)
     let page = personalTemplate().trimmingCharacters(in: .whitespacesAndNewlines)
     if said.isEmpty || said == page {
-        try? FileManager.default.removeItem(atPath: p)
+        if FileManager.default.fileExists(atPath: p) { try FileManager.default.removeItem(atPath: p) }
         return
     }
     let home = personalRootPath()
-    try? FileManager.default.createDirectory(
+    try FileManager.default.createDirectory(
         atPath: (p as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
     if !FileManager.default.fileExists(atPath: (home as NSString).appendingPathComponent(".git")) {
         _ = runGit(["init", "-q", home], home)
     }
-    try? text.write(toFile: p, atomically: true, encoding: .utf8)
+    try text.write(toFile: p, atomically: true, encoding: .utf8)
     // only text that holds is ever written here, so every commit is a state
     // that held: this is gate's own repository, not the operator's
     _ = runGit(["add", "-A"], home)
@@ -11034,8 +12537,316 @@ func benchSaid(_ answered: Answered) -> String {
 // than a bare code: the page's own fetch shows a network error for a dropped
 // connection, which reads as "the bench is gone" instead of "that request was
 // wrong".
+// The live port gets declared source inputs from the same verified delivery.
+// Resolved owner profiles below carry their native reading instead of evaluating it.
+func drawingPortInputs(_ w: WorldState, profileRow: LayoutRow? = nil, counts: Bool = true, paletteOverride: (path: String, text: String)? = nil) -> (plan: [String: Any], assets: [String: Data]) {
+    guard let root = layoutDir(w) else { return (["status": "none"], [:]) }
+    let profiles = profileRow.map { [$0] } ?? (w.layout?.rows ?? []).filter { $0.role == "drawing-profile" }
+    if profiles.isEmpty { return (["status": "none"], [:]) }
+    func refused(_ at: String, _ why: String) -> (plan: [String: Any], assets: [String: Data]) {
+        return (["status": "refused", "address": at, "reason": why], [:])
+    }
+    guard profiles.count == 1 else { return refused("gate.manifest.swift:1", "one DrawingProfileFile is required") }
+    let resolved = takenInputs(w)
+    if let bad = resolved.bad.first { return refused(bad.address, bad.claim) }
+    if let bad = kindBindingGuards(w.layout?.rows ?? [], readText(w.layout?.manifest ?? "") ?? "").first {
+        return refused(bad.address, bad.claim)
+    }
+    func source(_ row: LayoutRow) -> String {
+        inputPath(row, w, resolved) ?? ""
+    }
+    let row = profiles[0], path = source(row)
+    guard let bytes = inputBytes(path), let text = String(data: bytes, encoding: .utf8) else { return refused(row.path + ":1", "the drawing profile input is missing") }
+    let structure = codeOf(text)
+    func body(_ name: String) -> String {
+        matches("public enum " + name + "\\b[^\\{]*\\{(.*?)\\n\\}", structure, dotAll: true).first?.first ?? ""
+    }
+    func axis(_ body: String, _ key: String) -> String {
+        matches("typealias " + key + "\\s*=\\s*(\\w+)", body).first?.first ?? ""
+    }
+    let declarations = matches("public enum (\\w+): DrawingProfile \\{", structure)
+    guard declarations.count == 1 else { return refused(row.path + ":1", "one DrawingProfile is required") }
+    let profile = body(declarations[0][0]), paletteName = axis(profile, "Palette")
+    let font = body(axis(profile, "Font")), metrics = body(axis(profile, "Metrics"))
+    let qualified = matches("typeName:\\s*String\\s*\\{\\s*\"(\\w+)::", text).map { $0[0] }
+    let selected = Set([paletteName, axis(font, "Asset"), axis(metrics, "Input"), axis(profile, "License"), axis(profile, "Contract")] + qualified)
+    var inputs: [String: Any] = [:], assets: [String: Data] = [:]
+    for input in (w.layout?.rows ?? []) where selected.contains(input.name ?? "") {
+        guard let name = input.name else { continue }
+        let file = source(input)
+        guard let original = inputBytes(file) else {
+            return refused(input.path + ":1", "declared profile input is missing")
+        }
+        let data = name == paletteName && input.source == "mine" && paletteOverride?.path == input.path
+            ? Data(paletteOverride!.text.utf8) : original
+        let hash = sha256Hex(data); assets[hash] = data
+        var item: [String: Any] = ["path": input.path, "sha256": hash,
+                                   "source": input.source, "revision": input.from ?? "local", "line": input.line]
+        if let source = String(data: data, encoding: .utf8) { item["text"] = source }
+        if name == paletteName, counts, let source = item["text"] as? String, let q = countQuestion(source) {
+            let livePalette = paletteOverride.map { [$0.path: $0.text] } ?? [:]
+            let contexts = grammarContexts(w, live: livePalette)
+            if let context = contexts.contexts.first(where: { $0.name == input.language }), context.courtContext != nil {
+                if let bad = contexts.bad.first { return refused(bad.address, bad.claim) }
+                if let residue = contexts.unsupported.first { return refused(residue.address, residue.reason) }
+                let request = grammarCourtRequest(context, question: "count", count: q)!
+                let answer = grammarRecordedAnswer(request, receipts: context.courtReceipts)
+                guard grammarBoundAnswer(request, answer),
+                      let report = (try? JSONSerialization.jsonObject(with: answer.stdout)) as? [String: Any],
+                      let rows = report["results"] as? [[String: Any]] else {
+                    return refused(input.path + ":1", "the count court did not bind its complete source input")
+                }
+                let total = rows.reduce(0) { $0 + ($1["readings"] as? Int ?? 0) }
+                let diagnostics = (report["diagnostics"] as? [String] ?? []) + rows.flatMap { $0["diagnostics"] as? [String] ?? [] }
+                let held = report["outcome"] as? String == "holds"
+                let said = held ? "COUNT: \(total) source-bound readings checked\n"
+                    : diagnostics.map { "✗ " + $0 }.joined(separator: "\n") + "\n"
+                item["count"] = ["text": said, "source_sha256": hash, "reading": report,
+                                 "request_sha256": grammarCourtRequestHash(request)]
+            } else {
+            let definitions = formsDefinitions(w, language: input.language)
+            if let bad = definitions.bad.first { return refused(bad.address, bad.claim) }
+            let tmp = scratchDir("gate-drawing-count-")
+            let premise = joinPath(tmp, "Primitive.swift")
+            try? PinnedCorpus.primitive.write(toFile: premise, atomically: false, encoding: .utf8)
+            let countPath: String
+            if data != original {
+                countPath = joinPath(tmp, "Palette.swift")
+                try? data.write(to: URL(fileURLWithPath: countPath))
+            } else { countPath = file }
+            let borrowed = definitions.paths.isEmpty ? [premise] : definitions.paths
+            let said = courtSays(["count", countPath] + borrowed + ["--predicate", q.predicate,
+                                  "--encoding", q.encoding, "--sigma", q.sigma]).replacingOccurrences(of: countPath, with: input.path)
+            try? FileManager.default.removeItem(atPath: tmp)
+            item["count"] = ["text": said, "source_sha256": hash]
+            }
+        }
+        inputs[name] = item
+    }
+    let reader = inputBytes(joinPath(toolRoot(), "bin/renderer.js")) ?? runtimeData("bin/renderer.js") ?? Data()
+    let supportData = inputBytes(joinPath(toolRoot(), "bin/drawing-fonts.json")) ?? runtimeData("bin/drawing-fonts.json") ?? Data()
+    let support = (try? JSONSerialization.jsonObject(with: supportData)) ?? [String: Any]()
+    let recordData = inputBytes(joinPath(root, ".gate/forms-definitions.json")) ?? Data()
+    let record = (try? JSONSerialization.jsonObject(with: recordData)) ?? [String: Any]()
+    let accepted = runtimeData("bin/drawing-contract.from").flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? [String: Any]()
+    return (["status": "declared", "record": record,
+             "record_sha256": sha256Hex(recordData), "profile": ["path": row.path, "text": text, "sha256": sha256Hex(Data(text.utf8))],
+             "inputs": inputs, "reader": ["source": String(data: reader, encoding: .utf8) ?? "", "sha256": sha256Hex(reader)],
+             "support": support, "accepted_contract": accepted], assets)
+}
+
+// DocumentKit computed this profile at its owner. This reader checks delivery,
+// membership of the input set and installed capabilities; it computes no colour.
+func drawingInputs(_ w: WorldState, counts: Bool = true, allowPort: Bool = true, paletteOverride: (path: String, text: String)? = nil) -> (plan: [String: Any], assets: [String: Data]) {
+    let rows = w.layout?.rows ?? [], profiles = rows.filter { $0.role == "drawing-profile" }
+    if profiles.isEmpty { return (["status": "none", "reason": "Drawing without a profile"], [:]) }
+    func failed(_ at: String, _ why: String, _ status: String = "refused") -> (plan: [String: Any], assets: [String: Data]) {
+        return (["status": status, "address": at, "reason": why], [:])
+    }
+    guard profiles.count == 1, let profile = profiles.first else { return failed("gate.manifest.swift:1", "one DrawingProfileFile is required") }
+    let at = profile.path + ":1", taken = takenInputs(w)
+    if let bad = taken.bad.first { return failed(bad.address, bad.claim) }
+    guard profile.source == "theirs" else {
+        return failed(at, "a pinned owner-resolved Drawing profile is required", "unsupported")
+    }
+    guard let path = inputPath(profile, w, taken), let data = inputBytes(path),
+          let receipt = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+        return failed(at, "the owner profile receipt is not a delivered JSON object")
+    }
+    guard receipt["format"] as? String == "drawing-profile/1" else {
+        return failed(at, "this owner profile receipt format is not installed", "unsupported")
+    }
+    guard let reader = receipt["reader"] as? [String: Any], reader["id"] as? String == "showcase/DocumentKitProfileReader",
+          reader["version"] as? Int == 1, let readerFiles = reader["files"] as? [String: String], !readerFiles.isEmpty,
+          readerFiles.values.allSatisfy({ $0.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil }) else {
+        return failed(at, "this owner profile reader is not installed", "unsupported")
+    }
+    guard let sourceName = receipt["profile_row"] as? String, let sourceRow = rows.first(where: { $0.name == sourceName }),
+          let bound = receipt["inputs"] as? [String: [String: String]],
+          let cssSpec = receipt["css"] as? [String: String], let cssName = cssSpec["row"],
+          let cssRow = rows.first(where: { $0.name == cssName }), cssRow.source == "theirs",
+          let cssPath = inputPath(cssRow, w, taken), let cssData = inputBytes(cssPath),
+          cssSpec["sha256"] == sha256Hex(cssData), String(data: cssData, encoding: .utf8) != nil,
+          var result = receipt["result"] as? [String: Any] else {
+        return failed(at, "the owner profile or its CSS delivery is incomplete")
+    }
+    var port = drawingPortInputs(w, profileRow: sourceRow, counts: counts, paletteOverride: paletteOverride)
+    guard port.plan["status"] as? String == "declared", let inputs = port.plan["inputs"] as? [String: [String: Any]],
+          let source = port.plan["profile"] as? [String: Any], let sourceText = source["text"] as? String,
+          let paletteName = receipt["palette_row"] as? String, inputs[paletteName] != nil else {
+        return failed(at, (port.plan["reason"] as? String) ?? "the profile's source inputs are incomplete")
+    }
+    guard Set(bound.keys) == Set(inputs.keys).union([sourceName]), bound[sourceName]?["sha256"] == source["sha256"] as? String else {
+        return failed(at, "the receipt does not name exactly the resolved profile inputs")
+    }
+    var changed: [String] = []
+    for (name, input) in inputs where bound[name]?["sha256"] != input["sha256"] as? String { changed.append(name) }
+    let paletteRow = rows.first { $0.name == paletteName }
+    port.plan["palette_row"] = paletteName
+    port.plan["port_allowed"] = allowPort && paletteRow?.source == "mine"
+    if let livePalette = paletteOverride, !allowPort || paletteRow?.source != "mine" || livePalette.path != paletteRow?.path {
+        return failed(at, "only the MINE palette may request a live profile-port reading")
+    }
+    if !changed.isEmpty {
+        if allowPort, changed == [paletteName], paletteRow?.source == "mine" {
+            port.plan["owner_receipt"] = ["status": "stale", "sha256": sha256Hex(data), "reason": "The MINE palette differs from the owner's resolved profile"]
+            port.plan["origin"] = "port"
+            return port
+        }
+        return failed((changed.first.flatMap { inputs[$0]?["path"] as? String } ?? profile.path) + ":1", "the owner receipt names different input bytes")
+    }
+    // No field of the resolved receipt grants a different source-font identity.
+    do {
+        let metadata = try PublicationSource(sourceText, sourceRow.path)
+        guard let declaration = metadata.nodes.first(where: { $0.role == "DrawingProfile" }) else {
+            return failed(sourceRow.path + ":1", "one DrawingProfile source is required")
+        }
+        let axes = try declaration.axes(["Reader", "Contract", "Palette", "Bindings", "Font", "Metrics", "License", "Legible"], sourceRow.path)
+        let fontAxes = try metadata.node(axes["Font"]!).axes(["Asset", "Family", "Face"], sourceRow.path)
+        let metricAxes = try metadata.node(axes["Metrics"]!).axes(["Input", "Profile", "Font", "SourceFontSHA256", "UnitsPerEm", "CapHeight", "Advances", "MissingGlyph"], sourceRow.path)
+        let fontName = fontAxes["Asset"]!, metricName = metricAxes["Input"]!, licenseName = axes["License"]!
+        guard let fontHash = inputs[fontName]?["sha256"] as? String,
+              try metadata.word(metricAxes["SourceFontSHA256"]!) == fontHash,
+              let font = result["font"] as? [String: Any], font["sha256"] as? String == fontHash,
+              font["metrics_sha256"] as? String == inputs[metricName]?["sha256"] as? String,
+              let license = inputs[licenseName]?["text"] as? String, !license.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return failed(at, "font identity, metrics input or license delivery differs")
+        }
+        let support = port.plan["support"] as? [String: Any] ?? [:]
+        let supportedMetrics = support["metrics"] as? [String: Any] ?? [:]
+        guard support["profile"] as? String == font["profile"] as? String,
+              (support["fonts"] as? [String] ?? []).contains(fontHash), font["face"] as? String == "default",
+              font["units"] as? Int == supportedMetrics["units"] as? Int,
+              font["cap"] as? Int == supportedMetrics["cap"] as? Int,
+              font["advances_sha256"] as? String == supportedMetrics["advances_sha256"] as? String,
+              font["missingGlyph"] as? String == supportedMetrics["missingGlyph"] as? String else {
+            return failed((inputs[metricName]?["path"] as? String ?? profile.path) + ":1", "intact metrics are outside the installed drawing profile", "unsupported")
+        }
+        let bindings = result["bindings"] as? [[String: Any]] ?? []
+        let renderer = String(data: runtimeData("bin/renderer.js") ?? Data(), encoding: .utf8) ?? ""
+        let roles = Set(matches(#"var\(--vi-([a-z-]+),"#, renderer).map { $0[0] })
+        let keys = bindings.compactMap { b -> String? in
+            guard let role = b["role"] as? String, role.range(of: "^[a-z][a-z0-9-]*$", options: .regularExpression) != nil,
+                  let theme = b["theme"] as? String, ["light", "dark"].contains(theme) else { return nil }
+            return theme + "/" + role
+        }
+        let required = Set(roles.flatMap { ["light/" + $0, "dark/" + $0] })
+        guard keys.count == bindings.count, Set(keys).count == keys.count, required.isSubset(of: Set(keys)) else {
+            return failed(at, "the owner profile is missing a drawing role or theme")
+        }
+        let assets = result["assets"] as? [[String: String]] ?? []
+        guard assets.count == 2, Set(assets.compactMap { $0["name"] }) == ["font.ttf", "license.txt"],
+              assets.first(where: { $0["name"] == "font.ttf" })?["sha256"] == fontHash,
+              assets.first(where: { $0["name"] == "license.txt" })?["sha256"] == inputs[licenseName]?["sha256"] as? String,
+              assets.allSatisfy({ a in a["sha256"].flatMap { port.assets[$0] } != nil }) else {
+            return failed(at, "the owner profile resource set differs from its input bytes")
+        }
+        let accepted = (runtimeData("bin/drawing-contract.from").flatMap { try? JSONSerialization.jsonObject(with: $0) }) as? [String: Any] ?? [:]
+        var contract: [String: Any]? = nil
+        if let contractRow = receipt["contract_row"] as? String {
+            guard contractRow == axes["Contract"], let body = inputs[contractRow]?["text"] as? String,
+                  let candidate = (try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any] else {
+                return failed(at, "the Drawing contract input is damaged")
+            }
+            if candidate["format"] as? String == "drawing/1" {
+                let address = (inputs[contractRow]?["path"] as? String ?? profile.path) + ":1"
+                guard let cases = candidate["cases"] as? [[String: Any]],
+                      (candidate["owner"] as? [String: Any])?["files"] is [String: Any] else {
+                    return failed(address, "the Drawing contract receipt is incomplete")
+                }
+                var ids = Set<String>()
+                for item in cases {
+                    guard let id = item["id"] as? String, !id.isEmpty, ids.insert(id).inserted,
+                          let status = item["status"] as? String, ["svg", "refused", "not-compared"].contains(status),
+                          item["root"] is String, item["address"] is String else {
+                        return failed(address, "the Drawing contract case receipt is incomplete")
+                    }
+                    if status == "not-compared" {
+                        guard let reason = item["reason"] as? String, !reason.isEmpty else { return failed(address, "the Drawing remainder has no reason") }
+                    } else {
+                        guard let hashes = item["sourceSHA256"] as? [String], let sources = item["sources"] as? [String], hashes.count == sources.count,
+                              (hashes + [item["inputSHA256"] as? String ?? ""]).allSatisfy({ $0.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil }) else {
+                            return failed(address, "the Drawing contract input hashes are damaged")
+                        }
+                        if status == "svg" {
+                            guard let svg = item["svg"] as? String, item["svgSHA256"] as? String == sha256Hex(Data(svg.utf8)) else {
+                                return failed(address, "the Drawing contract output hash differs")
+                            }
+                        }
+                    }
+                }
+            }
+            if inputs[contractRow]?["sha256"] as? String == accepted["sha256"] as? String {
+                contract = candidate
+            }
+        } else if (try? metadata.word(axes["Contract"]!)) != "" {
+            return failed(at, "the receipt omits the declared Drawing contract input")
+        }
+        result["contract"] = contract.map { $0 as Any } ?? NSNull()
+        let acceptedPin = accepted.filter { ["repository", "revision", "source_path", "sha256"].contains($0.key) }
+        result["contract_pin"] = contract == nil ? NSNull() : acceptedPin
+        result["port_under_contract"] = contract != nil && accepted["port_sha256"] as? String == (port.plan["reader"] as? [String: Any])?["sha256"] as? String
+        result["case_count"] = result["port_under_contract"] as? Bool == true ? ((contract?["cases"] as? [Any])?.count ?? 0) : 0
+        result["status"] = contract == nil ? "not-compared" : "ready"
+        result["reason"] = contract == nil ? "The owner Drawing contract is not declared or has not been accepted" : "Owner-resolved profile; Drawing contract is installed"
+        if let declared = contract?["profile"] as? [String: Any], let expected = declared["inputSHA256"] as? [String] {
+            let actual = inputs.filter { $0.key != axes["Contract"]! }.compactMap { $0.value["sha256"] as? String }.sorted()
+            result["ownerInputsMatch"] = declared["profileSHA256"] as? String == source["sha256"] as? String && expected.sorted() == actual
+        } else { result["ownerInputsMatch"] = false }
+    } catch {
+        return failed(at, "the profile source metadata is incomplete: " + String(describing: error))
+    }
+    let hash = sha256Hex(data), cssHash = sha256Hex(cssData)
+    result["css_sha256"] = cssHash
+    result["inputSHA256"] = sha256Hex(publicationJSON(["owner_receipt": hash, "inputs": bound.mapValues { $0["sha256"] ?? "" }, "port": (port.plan["reader"] as? [String: Any])?["sha256"] ?? ""]))
+    result["origin"] = "owner"
+    result["owner_receipt"] = ["sha256": hash, "reader": reader]
+    var deliveredAssets = result["assets"] as? [[String: String]] ?? []
+    deliveredAssets.append(["sha256": hash, "name": "resolution.json"])
+    deliveredAssets.append(["sha256": cssHash, "name": "drawing.css"])
+    result["assets"] = deliveredAssets
+    port.plan["status"] = "resolved"
+    port.plan["resolved"] = result
+    port.plan["owner_receipt_sha256"] = hash
+    port.plan["css_sha256"] = cssHash
+    port.plan["css_row"] = cssName
+    port.plan["profile_row"] = sourceName
+    port.plan["resolved_row"] = profile.name ?? ""
+    port.assets[cssHash] = cssData
+    port.assets[hash] = data
+    return port
+}
+
+func drawingTakenTexts(_ w: WorldState) -> [(String, String)] {
+    let plan = drawingInputs(w, counts: false).plan
+    guard plan["status"] as? String == "declared" else { return [] }
+    let own = Set(benchFilesOf(w, readings: true).map { $0.0 })
+    let resolved = takenInputs(w)
+    var files: [[String: Any]] = []
+    if let profile = plan["profile"] as? [String: Any] { files.append(profile) }
+    if let inputs = plan["inputs"] as? [String: [String: Any]] { files += inputs.keys.sorted().compactMap { inputs[$0] } }
+    for row in w.layout?.rows ?? [] where row.source == "theirs" {
+        // A resource is not a text page. Decoding binary bytes with replacement
+        // would copy the shared asset into every shelf snapshot as broken text.
+        if let name = row.name, let path = resolved.paths[name],
+           let bytes = inputBytes(path),
+           let text = String(data: bytes, encoding: .utf8), !text.utf8.contains(0) {
+            files.append(["path": row.path, "text": text])
+        }
+    }
+    var names = Set<String>()
+    return files.compactMap { file in
+        guard let path = file["path"] as? String, let text = file["text"] as? String,
+              !own.contains(path) else { return nil }
+        let name = path.hasSuffix(".swift") ? String(path.dropLast(6)) : path
+        guard names.insert(name).inserted else { return nil }
+        return (name, text)
+    }
+}
+
 func serveFile(_ conn: GateSocket, _ path: String, _ ctype: String) {
-    guard let body = FileManager.default.contents(atPath: path) else {
+    let relative = path.hasPrefix(toolRoot() + "/") ? String(path.dropFirst(toolRoot().count + 1)) : ""
+    guard let body = inputBytes(path) ?? runtimeData(relative) else {
         serveJSON(conn, compactDumps(.object([
             ("error", .text("this request was not one the bench could read: FileNotFoundError")),
             ("next", .text("the terminal answers the same questions and says more: "
@@ -11174,6 +12985,10 @@ func registerTokens(_ w: WorldState) -> String {
         let lead = vals[name + "Lead"] ?? 0
         let leading = lead != 0 ? "/" + String(format: "%g", Double(lead) / 100) : ""
         rows.append("  --\(name.lowercased()): \(weight)\(px)px\(leading) \(stack);")
+        rows.append("  --\(name.lowercased())-size: \(px)px;")
+        if lead != 0 {
+            rows.append("  --\(name.lowercased())-leading: " + String(format: "%g", Double(lead) / 100) + ";")
+        }
     }
     // and the two faces on their own, for a rule that changes the face and keeps
     // whatever size it stands in: still a name, never a stack written by hand
@@ -11191,8 +13006,9 @@ func registerTokens(_ w: WorldState) -> String {
 // read. A name this world does not carry is a miss, never another file: the
 // door opening on the wrong room while saying nothing is the one thing this
 // page may not do. The fallback below is for the question that named nothing.
-func servePick(_ w: WorldState, _ query: [String: String]) -> String? {
-    let named = Dictionary(benchFilesOf(w).map { ($0.0, $0.1) }, uniquingKeysWith: { a, _ in a })
+func servePick(_ w: WorldState, _ query: [String: String], files: [(String, String)]? = nil) -> String? {
+    let selected = files ?? benchFilesOf(w, readings: true)
+    let named = Dictionary(selected.map { ($0.0, $0.1) }, uniquingKeysWith: { a, _ in a })
     let want = query["f"] ?? ""
     if let hit = named[want] { return hit }
     if undeclaredHere(w).contains(want), let dir = layoutDir(w) {
@@ -11202,6 +13018,78 @@ func servePick(_ w: WorldState, _ query: [String: String]) -> String? {
     if let facts = w.facts, FileManager.default.fileExists(atPath: facts) { return facts }
     return benchFilesOf(w).first(where: { FileManager.default.fileExists(atPath: $0.1) })?.1
         ?? w.facts
+}
+
+func benchOrigin(_ row: LayoutRow, _ taken: TakenResolution) -> StatusJSON {
+    var origin: [(String, StatusJSON)] = [
+        ("kind", .text(row.kind ?? "")), ("address", .text("gate.manifest.swift:\(row.line)")),
+        ("at", .text(row.from ?? "")), ("verified", .raw(taken.inputs[row.name ?? ""] != nil ? "true" : "false"))]
+    if let address = taken.addresses[row.name ?? ""] { origin.append(("record_address", .text(address))) }
+    for (key, value) in (taken.inputs[row.name ?? ""] ?? [:]).sorted(by: { $0.key < $1.key }) {
+        origin.append((key, .text(value)))
+    }
+    return .object(origin)
+}
+
+// Reading a taken page never turns its local view into an alternative source.
+func benchTakenRefusal(_ w: WorldState, _ name: String, resolved: TakenResolution? = nil,
+                       files: [(String, String)]? = nil) -> (address: String, claim: String)? {
+    let rows = (w.layout?.rows ?? []).filter { $0.path == name }
+    guard let row = rows.first(where: { $0.source == "theirs" }) else { return nil }
+    if rows.count != 1 || Set((files ?? benchFilesOf(w, readings: true, resolved: resolved)).filter { $0.0 == name }.map { absPath($0.1) }).count > 1 {
+        return ("gate.manifest.swift:\(row.line)", "\(name): more than one input declares this path; the source is ambiguous")
+    }
+    let taken = resolved ?? takenInputs(w)
+    if let bad = taken.bad.first { return bad }
+    if row.kind == "CarriedFile" && !taken.v2 {
+        return ("gate.manifest.swift:\(row.line)", "\(name): a taken text reading requires a verified v2 input record")
+    }
+    if taken.v2 && taken.paths[row.name ?? ""] == nil {
+        return ("gate.manifest.swift:\(row.line)", "\(name): the pinned input is unavailable")
+    }
+    if row.kind == "CarriedFile", let path = inputPath(row, w, taken), !benchText(path) {
+        return ("gate.manifest.swift:\(row.line)", "\(name): unsupported text reading; this input contains binary bytes")
+    }
+    return nil
+}
+
+func serveReadingRefusal(_ conn: GateSocket, _ bad: (address: String, claim: String)) {
+    serveSay(conn, 409, "application/json; charset=utf-8", Data(compactDumps(.object([
+        ("verdict", .text("refused")), ("address", .text(bad.address)), ("reason", .text(bad.claim))])).utf8))
+}
+
+func serveWriteFailure(_ conn: GateSocket, _ address: String, _ error: Error) {
+    serveSay(conn, 409, "application/json; charset=utf-8", Data(compactDumps(.object([
+        ("verdict", .text("refused")), ("address", .text(address)),
+        ("reason", .text("the file was not written: " + error.localizedDescription)),
+        ("next", .text("Check this path and its write permissions, then retry in gate serve."))])).utf8))
+}
+
+// Single and grouped reads share the delivery check. They hash the exact
+// buffer sent, after the response's input plan has resolved.
+func worldReading(_ w: WorldState, _ name: String, _ taken: TakenResolution,
+                  _ files: [(String, String)]) -> (code: Int, type: String, data: Data) {
+    if let bad = benchTakenRefusal(w, name, resolved: taken, files: files) {
+        return (409, "application/json; charset=utf-8", publicationJSON([
+            "verdict": "refused", "address": bad.address, "reason": bad.claim]))
+    }
+    if let row = w.layout?.rows.first(where: { $0.path == name && $0.source == "theirs" }),
+       ["CarriedFile", "FormsFile", "WorldFile"].contains(row.kind ?? ""),
+       let input = taken.inputs[row.name ?? ""], let path = taken.paths[row.name ?? ""] {
+        // Authenticate the actual delivery buffer too. A replacement between
+        // plan resolution and this read refuses, even within the same request.
+        guard let bytes = FileManager.default.contents(atPath: path), sha256Hex(bytes) == input["sha256"] else {
+            return (409, "application/json; charset=utf-8", publicationJSON([
+                "verdict": "refused", "address": taken.addresses[row.name ?? ""] ?? row.path + ":1",
+                "reason": "\(row.name ?? name): input changed or disappeared before delivery · \(input["repository"] ?? "")@\(input["revision"] ?? ""):\(input["source_path"] ?? "")"]))
+        }
+        return (200, "text/plain; charset=utf-8", bytes)
+    }
+    guard let path = servePick(w, ["f": name], files: files) else {
+        return (404, "text/plain; charset=utf-8", Data())
+    }
+    if let bytes = inputBytes(path) { return (200, "text/plain; charset=utf-8", bytes) }
+    return (200, "text/plain; charset=utf-8", Data(personalTemplate().utf8))
 }
 
 // ── WHAT A COMMIT DID, READ AS FACTS WHERE IT CAN BE. This is a world, so
@@ -11312,6 +13200,14 @@ func servedWorld() -> WorldState {
 }
 
 func serveDoor(_ a: [String]) -> Never {
+    let selected = a.dropFirst().filter { !$0.hasPrefix("-") && !$0.allSatisfy { $0.isNumber } }
+    if selected.count > 1 { cannot("serve selects one repository", "gate serve [repository] [port] --no-open") }
+    if let path = selected.first, !FileManager.default.changeCurrentDirectoryPath(absPath(path)) {
+        cannot("the selected repository is missing", "gate serve <repository> [port]")
+    }
+    let publicationRoot = FileManager.default.currentDirectoryPath
+    let publicationText = readText(joinPath(publicationRoot, "gate.manifest.swift")) ?? ""
+    let hasPublication = !matches(#"public enum \w+: Publication\s*\{"#, uncommented(publicationText)).isEmpty
     let nums = a.filter { !$0.isEmpty && $0.allSatisfy { $0.isNumber } }
     let port = nums.first.flatMap { Int($0) } ?? 4744
     let openIt = !a.contains("--no-open")
@@ -11362,6 +13258,9 @@ func serveDoor(_ a: [String]) -> Never {
                           .text("/check/view?who=&doc="), .text("/diff/transfer?who=&to=")])),
         ("mutating_routes", .text("none, by design")),
     ])) + "\n")
+    // Bind and listen have succeeded. A person can open this address as soon
+    // as this final startup line arrives; JSON callers keep the route record.
+    if !a.contains("--json") { out("Ready: http://127.0.0.1:\(port)\n") }
     fflush(stdout)
 
     if openIt {
@@ -11381,7 +13280,7 @@ func serveDoor(_ a: [String]) -> Never {
         #else
         opener.arguments = ["http://127.0.0.1:\(port)/ui"]
         #endif
-        try? opener.run()
+        _ = try? startProcess(opener)
     }
 
     while true {
@@ -11391,6 +13290,30 @@ func serveDoor(_ a: [String]) -> Never {
         if conn == gateNoSocket { continue }
         let spawnsBefore = SPAWNS
         if let asked = serveRead(conn) {
+            TAKEN_REQUEST = [:]
+            defer { TAKEN_REQUEST = nil; TAKEN_REQUIRED = nil }
+            if hasPublication || !matches(#"public enum \w+: Publication\s*\{"#, uncommented(readText(joinPath(publicationRoot, "gate.manifest.swift")) ?? "")).isEmpty {
+                do {
+                    let plan = try buildReadPlan(publicationRoot)
+                    let (code, payload) = readPlanResponse(plan, asked.method, asked.path, asked.query, asked.body)
+                    var data = payload.data
+                    if payload.contentType.hasPrefix("text/html"), let html = String(data: data, encoding: .utf8) {
+                        data = Data(html.replacingOccurrences(of: " data-plan=", with: " data-live=\"true\" data-plan=").utf8)
+                    }
+                    serveSay(conn, code, payload.contentType, data)
+                } catch { serveSay(conn, 409, "application/json", publicationFailureJSON(error)) }
+                gateClose(conn)
+                continue
+            }
+            if asked.method == "GET", asked.path.hasPrefix("/drawing-assets/") {
+                let parts = asked.path.dropFirst("/drawing-assets/".count).split(separator: "/")
+                let hash = parts.first.map(String.init) ?? ""
+                let assets = drawingInputs(servedWorld(), counts: false).assets
+                let type = parts.last == "drawing.css" ? "text/css; charset=utf-8" : "application/octet-stream"
+                if let data = assets[hash], parts.count <= 2 { serveSay(conn, 200, type, data) }
+                else { serveSay(conn, 404, nil, Data()) }
+                continue
+            }
             switch (asked.method, asked.path) {
             case ("GET", "/"), ("GET", "/ui"):
                 serveFile(conn, joinPath(toolRoot(), "web/ui.html"),
@@ -11398,6 +13321,34 @@ func serveDoor(_ a: [String]) -> Never {
             case ("GET", "/judge.js"):
                 // the judge this page reads with, served whole
                 serveFile(conn, joinPath(toolRoot(), "bin/judge.js"),
+                          "text/javascript")
+            case ("GET", "/drawing-profile.js"):
+                serveFile(conn, joinPath(toolRoot(), "bin/drawing-profile.js"), "text/javascript")
+            case ("GET", "/drawing-fonts.json"):
+                serveFile(conn, joinPath(toolRoot(), "bin/drawing-fonts.json"), "application/json")
+            case ("GET", "/grammar-contexts"):
+                let plan = grammarContexts(servedWorld()).receipt
+                let data = (try? JSONSerialization.data(withJSONObject: plan, options: [.sortedKeys])) ?? Data()
+                serveSay(conn, 200, "application/json; charset=utf-8", data)
+            case ("GET", "/drawing-profile"):
+                let plan = drawingInputs(servedWorld()).plan
+                let data = (try? JSONSerialization.data(withJSONObject: plan, options: [.sortedKeys])) ?? Data()
+                serveSay(conn, 200, "application/json; charset=utf-8", data)
+            case ("POST", "/drawing-profile"):
+                if let request = (try? JSONSerialization.jsonObject(with: asked.body)) as? [String: String],
+                   let path = request["path"], let text = request["text"] {
+                    let plan = drawingInputs(servedWorld(), paletteOverride: (path, text)).plan
+                    serveSay(conn, 200, "application/json; charset=utf-8", publicationJSON(plan))
+                } else {
+                    serveSay(conn, 400, "application/json; charset=utf-8", publicationJSON(["status": "refused", "address": "drawing-profile:1", "reason": "a MINE palette path and source text are required"]))
+                }
+            case ("GET", "/renderer.js"):
+                // the kit's span engine on JS, for the drawing view (bin/drawing.from)
+                serveFile(conn, joinPath(toolRoot(), "bin/renderer.js"),
+                          "text/javascript")
+            case ("GET", "/press.js"):
+                // the kit's rule applier on JS: a key on a drawing rewrites one alias
+                serveFile(conn, joinPath(toolRoot(), "bin/press.js"),
                           "text/javascript")
             case ("GET", "/codemirror.js"):
                 serveFile(conn, joinPath(toolRoot(), "web/codemirror.js"),
@@ -11416,9 +13367,12 @@ func serveDoor(_ a: [String]) -> Never {
                 // says it is and the voice it says it speaks in, read off the
                 // page itself rather than guessed from the shape of its name
                 _ = servedWorld()
-                let pages = shelf().map { $0.name }
+                let taken = drawingTakenTexts(servedWorld())
+                let pages = shelf().map { $0.name } + taken.map { $0.0 }
                 if let want = asked.query["m"], !want.isEmpty {
-                    if STDLIB_TEXTS[want] == nil {
+                    if let input = taken.first(where: { $0.0 == want }) {
+                        serveSay(conn, 200, "text/plain; charset=utf-8", Data(input.1.utf8))
+                    } else if STDLIB_TEXTS[want] == nil {
                         serveSay(conn, 404, nil, Data())
                     } else {
                         // THE WORLD AS IT STANDS, not the text as it shipped:
@@ -11514,7 +13468,7 @@ func serveDoor(_ a: [String]) -> Never {
                 }
             case ("GET", "/files"):
                 let w = servedWorld()
-                let named = benchFilesOf(w)
+                let named = benchFilesOf(w, readings: true)
                 let names = named.map { $0.0 }
                 let rows = w.layout?.rows ?? []
                 let factsDir = w.facts.map { (absPath($0) as NSString).deletingLastPathComponent }
@@ -11568,10 +13522,30 @@ func serveDoor(_ a: [String]) -> Never {
                         atPath: (hereRoot as NSString).appendingPathComponent($0.path))
                 }.map { $0.path }
                 let personal = personalPathOf(w)
+                let taken = takenInputs(w)
+                let unavailable = rows.filter { $0.source == "theirs" && ["carried", "forms", "world"].contains($0.role ?? "")
+                    && taken.v2 && taken.paths[$0.name ?? ""] == nil }
+                var origins: [(String, StatusJSON)] = []
+                for row in rows where row.source == "theirs" && (names.contains(row.path) || unavailable.contains(where: { $0.path == row.path })) {
+                    origins.append((row.path, benchOrigin(row, taken)))
+                }
+                let worldPaths = Set(worldFilesOf(w).map { canonicalPath($0) })
                 var pairs: [(String, StatusJSON)] = [
                     ("files", .list(names.map { .text($0) })),
+                    ("batch_readings", .raw("true")),
+                    ("world_files", .list(named.filter { item in
+                        worldPaths.contains(canonicalPath(item.1))
+                    }.map { .text($0.0) })),
+                    ("theirs", .object(origins)),
+                    ("unavailable", .list(unavailable.map { .text($0.path) })),
                     ("layout", lay.flatMap { names.contains($0) ? StatusJSON.text($0) : nil } ?? .null),
                     ("forms", .list(formsRows.map { .text($0) })),
+                    ("drawing_inputs", .list(drawingInputs(rows).paths.map { .text($0) })),
+                    ("drawing_input_refusals", .list(drawingInputs(rows).bad.map { .object([("address", .text($0.address)), ("claim", .text($0.claim))]) })),
+                    ("documents", .list(Array(Set(rows.filter { $0.kind == "DocumentFile" }
+                        .map(\.path))).sorted().map { .text($0) })),
+                    ("carried", .list(rows.filter { $0.role == "carried" && names.contains($0.path) }
+                        .map { .text($0.path) })),
                     // here and nobody declared: readable, not judged, and one
                     // gesture from being either
                     ("undeclared", .list(undeclaredHere(w).map { .text($0) })),
@@ -11581,6 +13555,12 @@ func serveDoor(_ a: [String]) -> Never {
                     ("opens", .object(opens)),
                     ("seams", .list(seamRows.map { .text($0) })),
                     ("overridden", .object(overridden)),
+                    // and the worlds the forms are judged in, as the vein joins
+                    // them (worldsOf), so the page judges a form inside its world
+                    // and keeps no second rule for joining them
+                    ("worlds", .list(worldsOf(rows.filter { $0.role == "forms" && names.contains($0.path) }
+                        .map { r in (r, inputPath(r, w, taken).flatMap(readText) ?? "") })
+                        .map { world in .list(world.map { .text($0.path) }) })),
                 ]
                 // WHERE THE COURT WAS TAKEN, so the one line a stranger asks
                 // about, "why is this already here, I took nothing", can be
@@ -11600,25 +13580,35 @@ func serveDoor(_ a: [String]) -> Never {
                         ? "true" : "false")))
                 serveJSON(conn, compactDumps(.object(pairs)))
             case ("GET", "/world"):
-                // the page obeys the declared layout: `?f=` names a file FROM
-                // that list, and a name the world does not carry is a miss
+                if let name = asked.query["f"], !name.isEmpty { TAKEN_REQUIRED = [name] }
                 let w = servedWorld()
-                guard let p = servePick(w, asked.query) else {
-                    serveSay(conn, 404, nil, Data())
-                    break
+                let taken = takenInputs(w)
+                let files = benchFilesOf(w, readings: true, resolved: taken)
+                let reply = worldReading(w, asked.query["f"] ?? "", taken, files)
+                serveSay(conn, reply.code, reply.type, reply.data)
+            case ("POST", "/world"):
+                guard let names = (try? JSONSerialization.jsonObject(with: asked.body)) as? [String] else {
+                    serveSay(conn, 400, "application/json", Data("{\"error\":\"a list of declared file names is required\"}".utf8)); break
                 }
-                if FileManager.default.fileExists(atPath: p) {
-                    serveFile(conn, p, "text/plain; charset=utf-8")
-                } else {
-                    // yours, and nobody has written in it yet
-                    serveSay(conn, 200, "text/plain; charset=utf-8",
-                             Data(personalTemplate().utf8))
+                TAKEN_REQUIRED = Set(names)
+                let w = servedWorld()
+                let taken = takenInputs(w)
+                let files = benchFilesOf(w, readings: true, resolved: taken)
+                var replies: [String: Any] = [:]
+                for name in Set(names).sorted() {
+                    let reply = worldReading(w, name, taken, files)
+                    replies[name] = ["status": reply.code, "text": String(decoding: reply.data, as: UTF8.self)]
                 }
+                let data = (try? JSONSerialization.data(withJSONObject: replies, options: [.sortedKeys])) ?? Data()
+                serveSay(conn, 200, "application/json; charset=utf-8", data)
             case ("GET", "/gitstatus"):
                 // the honest state: a write lands in the working copy and git
                 // carries the history, so this says whether the file is
                 // committed or has uncommitted changes, never our own save
                 let w = servedWorld()
+                if w.layout?.rows.contains(where: { $0.path == asked.query["f"] && $0.source == "theirs" }) == true {
+                    serveJSON(conn, compactDumps(.object([("file", .text(asked.query["f"] ?? "")), ("git", .text("source"))]))); break
+                }
                 guard let facts = w.facts else {
                     serveSay(conn, 404, nil, Data())
                     break
@@ -11725,9 +13715,17 @@ func serveDoor(_ a: [String]) -> Never {
                 let base = w.facts.map { (absPath($0) as NSString).deletingLastPathComponent }
                     ?? FileManager.default.currentDirectoryPath
                 let active = servePick(w, asked.query)
+                if let row = w.layout?.rows.first(where: { $0.path == asked.query["f"] && $0.source == "theirs" }) {
+                    if let bad = benchTakenRefusal(w, row.path) { serveReadingRefusal(conn, bad); break }
+                    guard let path = active, FileManager.default.contents(atPath: path) == asked.body else {
+                        serveReadingRefusal(conn, ("gate.manifest.swift:\(row.line)", "\(row.path): Theirs is read-only; an edited body is not the pinned input")); break
+                    }
+                }
                 let d = scratchDir("gate-bench-")
                 let layout = w.layout?.manifest
                 let formsHere = Set((w.layout?.rows ?? []).filter { $0.role == "forms" }
+                    .map { $0.path })
+                let carriedHere = Set((w.layout?.rows ?? []).filter { $0.role == "carried" }
                     .map { $0.path })
                 var paths: [String] = []
                 for (name, p) in benchFilesOf(w) {
@@ -11740,7 +13738,7 @@ func serveDoor(_ a: [String]) -> Never {
                     // typeName, and the plain court refuses both on sight: each
                     // has a guard of its own, and listing them here turned every
                     // row into a refusal
-                    if p != layout && !formsHere.contains(name)
+                    if p != layout && !formsHere.contains(name) && !carriedHere.contains(name)
                         && absPath(p) != absPath(policyPathOf(w) ?? "") {
                         paths.append(tp)
                     }
@@ -11748,24 +13746,18 @@ func serveDoor(_ a: [String]) -> Never {
                 // `courtSays` names the court itself: passing it again made the
                 // judge take `judge` for a file, and a run with a file that is
                 // not there says nothing about the files that are
-                let raw = courtSays(paths)
+                let raw = courtSays(paths, wholeCompany: true)
                 var refusals = judgedRefusals(raw).map {
                     (address: $0.address.replacingOccurrences(of: "__", with: "/"),
                      claim: $0.claim)
                 }
                 let sources = oneStream(w, benchFilesOf(w))
                     .filter { $0.1 == active || FileManager.default.fileExists(atPath: $0.1) }
-                    .map { (($0.0 as NSString).lastPathComponent,
+                    .map { ($0.0,
                             $0.1 == active ? text : (readText($0.1) ?? "")) }
-                if sources.count > 1 {
-                    refusals = attributeRefusals(refusals, sources)
-                } else {
-                    for (name, src) in sources {
-                        refusals = refineAddresses(src, refusals, name)
-                    }
-                }
+                refusals = refineSourceRefusals(refusals, sources)
                 // the same guards the terminal runs, over the text in the editor
-                refusals += duplicateGuardsOver(sources)
+                refusals += duplicateGuardsOver(grammarIndependentSources(w, sources))
                 refusals += entryGuardsOver(sources)
                 let typedLayout = active == layout ? text : nil
                 let liveRows = typedLayout.map { layoutRowsFull(base, said: $0).rows }
@@ -11775,7 +13767,9 @@ func serveDoor(_ a: [String]) -> Never {
                 }
                 var size: [String: Int] = [:]
                 refusals += manifestGuards(w, liveRows: liveRows, liveText: typedLayout)
-                refusals += formsGuards(w, &size, live: typed)
+                var unsupported: [FormResidue] = []
+                let courtCoverage = GrammarCoverage()
+                refusals += formsGuards(w, &size, unsupported: &unsupported, live: typed, coverage: courtCoverage)
                 refusals += policyGuards(w) + stdlibGuards(w) + vendoredGuards(w)
                 refusals += takenJudgeGuard(w) + codeownersPairGuards(w)
                 let times = matches("([\\d.]+) ms", raw).compactMap { $0.first }
@@ -11784,14 +13778,21 @@ func serveDoor(_ a: [String]) -> Never {
                 // only `judged together`, which is a verdict with no measure
                 let measured = matches("(\\d+) declarations · (\\d+) lookups · (\\d+) premises",
                                        raw).first
-                serveJSON(conn, compactDumps(.object([
-                    ("verdict", .text(refusals.isEmpty ? "holds" : "refused")),
+                let checked = formsChecked(size) + (measured == nil ? 0 : 1)
+                let outcome = formsOutcome(refusals.count, unsupported, checked)
+                var pairs: [(String, StatusJSON)] = [
+                    ("verdict", .text(outcome)),
+                    ("checked", .raw(String(checked))),
+                    ("unsupported", formResidueJSON(unsupported)),
+                    ("unchecked", .list(courtCoverage.exclusions)),
+                    ("court_readings", .list(courtCoverage.reports)),
                     ("refusals", .list(refusals.map {
                         .object([("address", .text($0.address)), ("claim", .text($0.claim))]) })),
                     ("declarations", measured.map { StatusJSON.raw($0[0]) } ?? .null),
                     ("premises", measured.map { StatusJSON.raw($0[2]) } ?? .null),
-                    ("judge_ms", times.last.map { StatusJSON.raw($0) } ?? .null)]),
-                    ascii: true))
+                    ("judge_ms", times.last.map { StatusJSON.raw($0) } ?? .null)]
+                if outcome == "empty" { pairs.append(("reason", .text(EMPTY_FORMS_REASON))) }
+                serveJSON(conn, compactDumps(.object(pairs), ascii: true))
                 // ── AND THE PANEL DOES NOT GROW ON SOMEBODY'S DISK: one
                 // directory per keystroke, removed none, thirty-four thousand
                 // standing in the temp of the machine this was written on
@@ -11881,8 +13882,9 @@ func serveDoor(_ a: [String]) -> Never {
                 } else {
                     lines.append(wrote)
                 }
-                try? lines.joined(separator: "\n").write(toFile: path, atomically: true,
-                                                         encoding: .utf8)
+                do { try lines.joined(separator: "\n").write(toFile: path, atomically: true,
+                                                            encoding: .utf8) }
+                catch { serveWriteFailure(conn, relPath(path, layoutDir(w) ?? "."), error); break }
                 serveJSON(conn, compactDumps(.object([
                     ("wrote", .text(wrote)),
                     ("file", .text(relPath(path, layoutDir(w) ?? "."))),
@@ -11896,17 +13898,22 @@ func serveDoor(_ a: [String]) -> Never {
                 // writable names are the bench's own list and nothing else.
                 let w = servedWorld()
                 let text = String(decoding: asked.body, as: UTF8.self)
+                if let row = w.layout?.rows.first(where: { $0.path == asked.query["f"] && $0.source == "theirs" }) {
+                    serveReadingRefusal(conn, ("gate.manifest.swift:\(row.line)", "\(row.path): Theirs is read-only; change the owner and take a new pin")); break
+                }
                 let named = Dictionary(benchFilesOf(w).map { ($0.0, $0.1) },
                                        uniquingKeysWith: { a, _ in a })
                 guard let p = named[asked.query["f"] ?? ""] else {
                     serveSay(conn, 404, nil, Data())
                     break
                 }
-                if p == personalPathOf(w) {
-                    writePersonal(w, text)      // empty means gone, not an empty file
-                } else {
-                    try? text.write(toFile: p, atomically: true, encoding: .utf8)
-                }
+                do {
+                    if p == personalPathOf(w) {
+                        try writePersonal(w, text)      // empty means gone, not an empty file
+                    } else {
+                        try text.write(toFile: p, atomically: true, encoding: .utf8)
+                    }
+                } catch { serveWriteFailure(conn, asked.query["f"] ?? p, error); break }
                 serveSay(conn, 200, nil, Data())
             default:
                 serveSay(conn, 404, nil, Data())
@@ -11916,6 +13923,578 @@ func serveDoor(_ a: [String]) -> Never {
             err("gate-cli: spawns \(SPAWNS - spawnsBefore) this request\n")
         }
         gateClose(conn)
+    }
+}
+
+// publication/1: both transports take one plan and one set of response bytes.
+struct PublicationFailure: Error {
+    var address: String
+    var reason: String
+    var status = "refused"
+}
+func publicationJSON(_ value: Any) -> Data {
+    return (try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .fragmentsAllowed])) ?? Data("null".utf8)
+}
+func publicationObject(_ value: StatusJSON) -> [String: Any] {
+    return (try? JSONSerialization.jsonObject(with: Data(compactDumps(value).utf8))) as? [String: Any] ?? [:]
+}
+func runtimeData(_ relative: String) -> Data? {
+    if let bytes = FileManager.default.contents(atPath: joinPath(toolRoot(), relative)) { return bytes }
+    return RUNTIME_EMBEDDED[relative].flatMap { Data(base64Encoded: $0) }
+}
+func publicationEscape(_ text: String) -> String {
+    return text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
+        .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
+}
+func publicationQuery(_ text: String) -> String {
+    return text.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()")) ?? ""
+}
+func publicationCWD<T>(_ root: String, _ run: () throws -> T) rethrows -> T {
+    let old = FileManager.default.currentDirectoryPath
+    FileManager.default.changeCurrentDirectoryPath(root)
+    defer { FileManager.default.changeCurrentDirectoryPath(old) }
+    return try run()
+}
+struct PublicationNode {
+    var name: String
+    var role: String
+    var body: String
+    var line: Int
+    func axes(_ allowed: Set<String>, _ file: String) throws -> [String: String] {
+        var result: [String: String] = [:]
+        let pattern = #"public\s+typealias\s+(\w+)\s*=\s*([^\n]+)"#
+        for m in matches(pattern, body) {
+            let key = m[0], value = m[1].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard allowed.contains(key), result[key] == nil else {
+                throw PublicationFailure(address: "\(file):\(line)", reason: "\(name).\(key): unknown or repeated field")
+            }
+            guard !value.isEmpty else { throw PublicationFailure(address: "\(file):\(line)", reason: "\(name).\(key): empty axis") }
+            result[key] = value
+        }
+        let rest = body.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+        guard rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw PublicationFailure(address: "\(file):\(line)", reason: "\(name): expected declared axes")
+        }
+        guard Set(result.keys) == allowed else {
+            throw PublicationFailure(address: "\(file):\(line)", reason: "\(name): missing fields " + allowed.subtracting(result.keys).sorted().joined(separator: ", "))
+        }
+        return result
+    }
+}
+struct PublicationSource {
+    var file: String
+    var nodes: [PublicationNode] = []
+    var words: [String: String] = [:]
+    init(_ text: String, _ address: String) throws {
+        file = address
+        let code = uncommented(text)
+        if let (_, line) = matchesAt(#"^\s*import\s+"#, code, lines: true).first {
+            throw PublicationFailure(address: "\(address):\(line)", reason: "catalog imports need a supported context", status: "unsupported")
+        }
+        for (groups, line) in matchesAt(#"public enum (\w+): (\w+)\s*\{([^{}]*)\}"#, code, dotAll: true) {
+            guard !nodes.contains(where: { $0.name == groups[0] }) else {
+                throw PublicationFailure(address: "\(address):\(line)", reason: "repeated record " + groups[0])
+            }
+            nodes.append(PublicationNode(name: groups[0], role: groups[1], body: groups[2], line: line))
+        }
+        for (g, line) in matchesAt(#"extension (\w+)\s*\{\s*public static var typeName:\s*String\s*\{\s*("(?:\\.|[^"\\])*")\s*\}\s*\}"#, code, dotAll: true) {
+            guard words[g[0]] == nil, let word = (try? JSONSerialization.jsonObject(with: Data(g[1].utf8), options: .fragmentsAllowed)) as? String else {
+                throw PublicationFailure(address: "\(address):\(line)", reason: "unreadable or repeated typeName for " + g[0])
+            }
+            words[g[0]] = word
+        }
+    }
+    func node(_ name: String) throws -> PublicationNode {
+        guard let n = nodes.first(where: { $0.name == name }) else {
+            throw PublicationFailure(address: file + ":1", reason: "unresolved record " + name)
+        }
+        return n
+    }
+    func word(_ name: String) throws -> String {
+        guard let word = words[name] else { throw PublicationFailure(address: file + ":1", reason: "unresolved typeName " + name) }
+        return word
+    }
+}
+struct PublicationReply {
+    var data: Data
+    var contentType: String
+}
+struct ReadPlan {
+    var document: [String: Any]
+    var replies: [String: PublicationReply]
+    var watched: [String: String]
+    var directories: [String: [String]]
+    func current() -> Bool {
+        for (file, hash) in watched {
+            guard let bytes = FileManager.default.contents(atPath: file), sha256Hex(bytes) == hash else { return false }
+        }
+        for (dir, names) in directories {
+            if ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []).sorted() != names { return false }
+        }
+        return true
+    }
+}
+struct PublicationDoor {
+    var name: String
+    var id: String
+    var world: String
+    var directory: String
+    var shown: String
+    var title: String
+    var group: String
+    var caption: String
+}
+var PUBLICATION_CACHE: (root: String, plan: ReadPlan)? = nil
+let PUBLICATION_ASSETS = [
+    "codemirror.js": "web/codemirror.js", "codemirror.css": "web/codemirror.css",
+    "publication.js": "web/publication.js", "judge.js": "bin/judge.js", "renderer.js": "bin/renderer.js",
+    "reader-draft.js": "web/reader-draft.js",
+    "world-court.js": "bin/world-court.js", "court-contexts.js": "bin/court-contexts.js",
+    "grammar-policy.js": "bin/grammar-policy.js",
+    "press.js": "bin/press.js", "drawing-profile.js": "bin/drawing-profile.js",
+    "drawing-fonts.json": "bin/drawing-fonts.json", "drawing-contract.from": "bin/drawing-contract.from",
+    "vi_court.js": "bin/court-wasm/web/vi_court.js", "vi_court_bytes.js": "bin/court-wasm/web/vi_court_bytes.js",
+    "court-wasm.from": "bin/court-wasm.from", "LICENSE": "LICENSE", "NOTICE.md": "docs/NOTICE.md"
+]
+func publicationRelative(_ path: String) -> Bool {
+    return !path.isEmpty && !path.contains("\\") && pathRoot(path, .posix) == nil && pathRoot(path, .windows) == nil
+        && path.split(separator: "/", omittingEmptySubsequences: false).allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+}
+func publicationFailureJSON(_ error: Error) -> Data {
+    let e = error as? PublicationFailure ?? PublicationFailure(address: "publication:1", reason: String(describing: error))
+    return publicationJSON(["verdict": e.status, "status": e.status, "address": e.address, "reason": e.reason,
+                            "input_errors": [["address": e.address, "reason": e.reason]]])
+}
+func buildReadPlan(_ selected: String) throws -> ReadPlan {
+    let root = canonicalPath(selected)
+    if let cached = PUBLICATION_CACHE, cached.root == root, cached.plan.current() { return cached.plan }
+    return try publicationCWD(root) {
+        guard gitExitCode(["rev-parse", "--is-inside-work-tree"], root) == 0 else {
+            throw PublicationFailure(address: "gate.manifest.swift:1", reason: "publish needs a local Git checkout")
+        }
+        var watched: [String: String] = [:], directories: [String: [String]] = [:]
+        var blobs: [String: Data] = [:]
+        func take(_ path: String, _ address: String) throws -> Data {
+            guard let bytes = FileManager.default.contents(atPath: path) else {
+                throw PublicationFailure(address: address, reason: "required input is missing")
+            }
+            watched[path] = sha256Hex(bytes)
+            blobs[sha256Hex(bytes)] = bytes
+            let dir = parentPath(path) ?? root
+            directories[dir] = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []).sorted()
+            return bytes
+        }
+        var replies: [String: PublicationReply] = [:]
+        let manifest = joinPath(root, "gate.manifest.swift")
+        let manifestBytes = try take(manifest, "gate.manifest.swift:1")
+        let source = try PublicationSource(String(decoding: manifestBytes, as: UTF8.self), "gate.manifest.swift")
+        let publications = source.nodes.filter { $0.role == "Publication" }
+        guard publications.count == 1 else {
+            throw PublicationFailure(address: "gate.manifest.swift:1", reason: "declare exactly one Publication; found \(publications.count)")
+        }
+        let publication = publications[0]
+        let axes = try publication.axes(["Id", "Entry", "Catalog", "DraftPolicy", "DrawingProfile", "Aliases"], source.file)
+        let draftPolicy = axes["DraftPolicy"]!
+        guard ["ReadOnly", "ReaderDraft"].contains(draftPolicy) else {
+            throw PublicationFailure(address: "gate.manifest.swift:\(publication.line)", reason: "DraftPolicy must name ReadOnly or ReaderDraft", status: "unsupported")
+        }
+        let identity = try source.word(axes["Id"]!)
+        guard !identity.isEmpty else { throw PublicationFailure(address: "gate.manifest.swift:\(publication.line)", reason: "Publication.Id is empty") }
+        let rootLayout = layoutRowsFull(root)
+        let rootWorld = WorldState(facts: nil, tables: nil, layout: Layout(manifest: manifest, rows: rootLayout.rows))
+        let resolved = takenInputs(rootWorld)
+        if let bad = resolved.bad.first { throw PublicationFailure(address: bad.address, reason: bad.claim) }
+        guard resolved.v2 else { throw PublicationFailure(address: ".gate/forms-definitions.json:1", reason: "publication requires v2 files") }
+        let rootRecordPath = joinPath(root, ".gate/forms-definitions.json")
+        let recordBytes = try take(rootRecordPath, ".gate/forms-definitions.json:1")
+        let rootRecord = (try? JSONSerialization.jsonObject(with: recordBytes)) as? [String: Any] ?? [:]
+        if let bad = manifestGuards(rootWorld).first { throw PublicationFailure(address: bad.address, reason: bad.claim) }
+        let drawingName = axes["DrawingProfile"]!
+        var drawingPlan: [String: Any] = ["status": "none", "reason": "NoDrawing"]
+        var drawingAssets: [String: Data] = [:], profileNames = Set<String>()
+        if drawingName != "NoDrawing" {
+            guard rootLayout.rows.first(where: { $0.name == drawingName })?.kind == "DrawingProfileFile" else {
+                throw PublicationFailure(address: "gate.manifest.swift:\(publication.line)", reason: "DrawingProfile must name an installed owner-resolved profile row", status: "unsupported")
+            }
+            let profile = drawingInputs(rootWorld, counts: false, allowPort: false)
+            guard profile.plan["status"] as? String == "resolved" else {
+                throw PublicationFailure(address: profile.plan["address"] as? String ?? "gate.manifest.swift:\(publication.line)",
+                    reason: profile.plan["reason"] as? String ?? "the owner-resolved drawing profile is unavailable",
+                    status: profile.plan["status"] as? String == "unsupported" ? "unsupported" : "refused")
+            }
+            drawingPlan = profile.plan; drawingAssets = profile.assets
+            profileNames = Set((profile.plan["inputs"] as? [String: Any] ?? [:]).keys)
+            for key in ["profile_row", "resolved_row", "css_row"] {
+                if let name = profile.plan[key] as? String { profileNames.insert(name) }
+            }
+            var urls: [String: String] = [:]
+            let result = drawingPlan["resolved"] as? [String: Any] ?? [:]
+            for asset in result["assets"] as? [[String: String]] ?? [] {
+                if let hash = asset["sha256"], let name = asset["name"] { urls[hash] = "assets/drawing/" + hash + "/" + name }
+            }
+            drawingPlan["asset_urls"] = urls
+        }
+        let delivery = (drawingName == "NoDrawing" ? "NoDrawing/" : "OwnerProfile/") + draftPolicy
+        func limitedContext(_ record: [String: Any], _ text: String, _ address: String, prepared: Bool = false) throws {
+            if let value = record["languages"], !(value is [String: Any]) {
+                throw PublicationFailure(address: address, reason: "languages must be an object")
+            }
+            if !prepared && (!(record["languages"] as? [String: Any] ?? [:]).isEmpty
+                || !matches(#"typealias\s+Language\s*=|^\s*import\s+"#, uncommented(text), lines: true).isEmpty) {
+                throw PublicationFailure(address: address, reason: "this publication needs a complete Language/scope context", status: "unsupported")
+            }
+        }
+        try limitedContext(rootRecord, String(decoding: manifestBytes, as: UTF8.self), "gate.manifest.swift:1")
+        guard let catalogRow = rootLayout.rows.first(where: { $0.name == axes["Catalog"] }), catalogRow.source == "theirs",
+              catalogRow.kind == "CatalogFile", let catalogPath = resolved.paths[catalogRow.name ?? ""] else {
+            throw PublicationFailure(address: "gate.manifest.swift:\(publication.line)", reason: "Catalog must name a pinned Theirs CatalogFile row")
+        }
+        var inputs: [[String: Any]] = [], manifests: [[String: Any]] = [], records: [[String: Any]] = []
+        for row in rootLayout.rows {
+            guard row.source == "theirs", (row.kind == "CatalogFile" || profileNames.contains(row.name ?? "")), let path = inputPath(row, rootWorld, resolved) else {
+                throw PublicationFailure(address: "gate.manifest.swift:\(row.line)", reason: "root input Kind needs a supported publication reader", status: "unsupported")
+            }
+            let bytes = try take(path, row.path + ":1")
+            inputs.append(["manifest": "gate.manifest.swift", "row": row.name ?? "", "path": row.path, "kind": row.kind ?? "", "reader": installedKindReaders()[row.kind ?? ""] ?? "", "source": "theirs", "sha256": sha256Hex(bytes)])
+        }
+        manifests.append(["path": "gate.manifest.swift", "sha256": sha256Hex(manifestBytes)])
+        records.append(["path": ".gate/forms-definitions.json", "sha256": sha256Hex(recordBytes)])
+        let catalogBytes = try take(catalogPath, catalogRow.path + ":1")
+        let catalog = try PublicationSource(String(decoding: catalogBytes, as: UTF8.self), catalogRow.path)
+        var doors: [PublicationDoor] = [], ids = Set<String>()
+        for node in catalog.nodes where !matches(#"typealias\s+Id\s*="# , node.body).isEmpty {
+            let a = try node.axes(["Id", "Group", "Title", "Shown", "Reads", "Caption"], catalog.file)
+            let id = try catalog.word(a["Id"]!)
+            guard id.range(of: "^[a-z][a-z0-9-]*$", options: .regularExpression) != nil,
+                  !["assets", "snapshots", "styles", "read-plan.json"].contains(id), ids.insert(id).inserted else {
+                throw PublicationFailure(address: "\(catalog.file):\(node.line)", reason: "unsafe or repeated door Id " + id)
+            }
+            let world = try catalog.node(a["Reads"]!), w = try world.axes(["File", "Name"], catalog.file)
+            let directory = try catalog.word(w["File"]!)
+            let name = try catalog.word(w["Name"]!)
+            guard publicationRelative(directory), !leavesWorldHere(directory, root) else {
+                throw PublicationFailure(address: "\(catalog.file):\(world.line)", reason: "world File leaves the selected repository")
+            }
+            let group = try catalog.node(a["Group"]!).axes(["Name"], catalog.file)
+            doors.append(PublicationDoor(name: node.name, id: id, world: name, directory: directory,
+                shown: try catalog.word(a["Shown"]!), title: try catalog.word(a["Title"]!),
+                group: try catalog.word(group["Name"]!), caption: try catalog.word(a["Caption"]!)))
+        }
+        guard !doors.isEmpty, let entry = doors.first(where: { $0.name == axes["Entry"] }) else {
+            throw PublicationFailure(address: "gate.manifest.swift:\(publication.line)", reason: "Entry does not name a catalog door")
+        }
+        var routes = doors.map { ["path": $0.id + "/", "door": $0.name, "world": $0.directory] }
+        routes.append(["path": "", "door": entry.name, "world": entry.directory])
+        var aliases = axes["Aliases"]!.trimmingCharacters(in: .whitespacesAndNewlines)
+        if aliases.hasPrefix("("), aliases.hasSuffix(")") { aliases = String(aliases.dropFirst().dropLast()) }
+        var paths = Set(routes.map { $0["path"]! })
+        for reference in aliases.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }).filter({ !$0.isEmpty }) {
+            let alias = try source.node(reference)
+            guard alias.role == "PublicationAlias" else { throw PublicationFailure(address: "gate.manifest.swift:\(alias.line)", reason: "Aliases names a non-alias record") }
+            let a = try alias.axes(["Path", "To"], source.file), path = try source.word(a["Path"]!)
+            guard publicationRelative(path), path.range(of: "^[a-z][a-z0-9-]*(/[a-z][a-z0-9-]*)*$", options: .regularExpression) != nil, !["assets", "snapshots", "styles", "read-plan.json"].contains(path.split(separator: "/").first.map(String.init) ?? ""),
+                  let door = doors.first(where: { $0.name == a["To"] }), paths.insert(path + "/").inserted else {
+                throw PublicationFailure(address: "gate.manifest.swift:\(alias.line)", reason: "unsafe, conflicting or unresolved alias")
+            }
+            routes.append(["path": path + "/", "door": door.name, "world": door.directory])
+        }
+        // A route cannot be both an output directory and another route's file.
+        var worlds: [[String: Any]] = []
+        let jsonType = "application/json; charset=utf-8", textType = "text/plain; charset=utf-8"
+        func reply(_ path: String, _ object: Any) { replies[path] = PublicationReply(data: publicationJSON(object), contentType: jsonType) }
+        for (asset, file) in PUBLICATION_ASSETS {
+            guard let bytes = runtimeData(file) else { throw PublicationFailure(address: file + ":1", reason: "installed runtime resource is missing") }
+            if FileManager.default.fileExists(atPath: joinPath(toolRoot(), file)) { watched[joinPath(toolRoot(), file)] = sha256Hex(bytes) }
+            let type = asset.hasSuffix(".js") ? "text/javascript" : asset.hasSuffix(".css") ? "text/css" : "text/plain; charset=utf-8"
+            replies["assets/" + asset] = PublicationReply(data: bytes, contentType: type)
+        }
+        if drawingName != "NoDrawing", let result = drawingPlan["resolved"] as? [String: Any],
+           let cssHash = drawingPlan["css_sha256"] as? String, let css = drawingAssets[cssHash] {
+            replies["assets/drawing/" + cssHash + "/drawing.css"] = PublicationReply(data: css, contentType: "text/css; charset=utf-8")
+            for asset in result["assets"] as? [[String: String]] ?? [] {
+                if let hash = asset["sha256"], let name = asset["name"], let bytes = drawingAssets[hash] {
+                    let type = name.hasSuffix(".css") ? "text/css; charset=utf-8" : "application/octet-stream"
+                    replies["assets/drawing/" + hash + "/" + name] = PublicationReply(data: bytes, contentType: type)
+                }
+            }
+        }
+        guard let template = runtimeData("web/ui.html"), let ui = String(data: template, encoding: .utf8) else {
+            throw PublicationFailure(address: "web/ui.html:1", reason: "installed UI is missing")
+        }
+        if FileManager.default.fileExists(atPath: joinPath(toolRoot(), "web/ui.html")) { watched[joinPath(toolRoot(), "web/ui.html")] = sha256Hex(template) }
+        var coverage: [[String: Any]] = []
+        var languagePlans: [String: Any] = [:]
+        for door in doors {
+            let worldRoot = joinPath(root, door.directory)
+            let worldData = try publicationCWD(worldRoot) { () throws -> [String: Any] in
+                let mp = joinPath(worldRoot, "gate.manifest.swift")
+                let mb = try take(mp, door.directory + "/gate.manifest.swift:1")
+                let parsed = layoutRowsFull(worldRoot)
+                let w = WorldState(facts: nil, tables: nil, layout: Layout(manifest: mp, rows: parsed.rows))
+                let taken = takenInputs(w)
+                if let bad = taken.bad.first { throw PublicationFailure(address: door.directory + "/" + bad.address, reason: bad.claim) }
+                let rp = joinPath(worldRoot, ".gate/forms-definitions.json")
+                let rb = try take(rp, door.directory + "/.gate/forms-definitions.json:1")
+                let record = (try? JSONSerialization.jsonObject(with: rb)) as? [String: Any] ?? [:]
+                guard record["format"] as? Int == 2 else { throw PublicationFailure(address: door.directory + "/.gate/forms-definitions.json:1", reason: "world requires a v2 record") }
+                // Resolve Language once into this ReadPlan; both transports carry the
+                // same scope/input receipt and the same court responses.
+                let contexts = grammarContexts(w, resolved: taken)
+                try limitedContext(record, String(decoding: mb, as: UTF8.self), door.directory + "/gate.manifest.swift:1", prepared: contexts.active)
+                languagePlans[door.directory] = ["declared": record["languages"] ?? [:], "resolved": contexts.receipt]
+                if let bad = manifestGuards(w).first { throw PublicationFailure(address: door.directory + "/" + bad.address, reason: bad.claim) }
+                manifests.append(["path": door.directory + "/gate.manifest.swift", "sha256": sha256Hex(mb)])
+                records.append(["path": door.directory + "/.gate/forms-definitions.json", "sha256": sha256Hex(rb)])
+                var texts: [String: String] = ["gate.manifest.swift": String(decoding: mb, as: UTF8.self)], kinds: [String: String] = [:]
+                for row in parsed.rows {
+                    guard let kind = row.kind, ["FormsFile", "DocumentFile", "WorldFile", "CarriedFile"].contains(kind), let reader = installedKindReaders()[kind] else {
+                        throw PublicationFailure(address: "\(door.directory)/gate.manifest.swift:\(row.line)", reason: "Kind needs its publication reader", status: "unsupported")
+                    }
+                    guard let path = inputPath(row, w, taken) else { throw PublicationFailure(address: "\(door.directory)/gate.manifest.swift:\(row.line)", reason: "unresolved input") }
+                    let bytes = try take(path, door.directory + "/" + row.path + ":1")
+                    let origin = (record["files"] as? [[String: Any]] ?? []).first { $0["row"] as? String == row.name }
+                    let sourceHash = sha256Hex(bytes)
+                    if row.source == "theirs", origin?["sha256"] as? String != sourceHash {
+                        throw PublicationFailure(address: door.directory + "/" + row.path + ":1", reason: "taken input changed after resolution")
+                    }
+                    for unit in contexts.contexts.flatMap(\.units) where unit.row == row.name && unit.sha256 != sourceHash {
+                        throw PublicationFailure(address: door.directory + "/" + row.path + ":1", reason: "source changed between its Language reading and the delivery snapshot")
+                    }
+                    guard let text = String(data: bytes, encoding: .utf8), !text.utf8.contains(0) else {
+                        throw PublicationFailure(address: door.directory + "/" + row.path + ":1", reason: "binary carried inputs need their asset reader", status: "unsupported")
+                    }
+                    try limitedContext([:], text, door.directory + "/" + row.path + ":1", prepared: row.language != nil && contexts.active)
+                    if !contexts.active, row.role == "forms", countQuestion(text) != nil {
+                        throw PublicationFailure(address: door.directory + "/" + row.path + ":1", reason: "count needs a declared definition context; this delivery never substitutes its installed Primitive", status: "unsupported")
+                    }
+                    texts[row.path] = text; kinds[row.path] = kind
+                    inputs.append(["manifest": door.directory + "/gate.manifest.swift", "row": row.name ?? "", "path": row.path,
+                        "kind": kind, "reader": reader, "source": row.source, "sha256": sha256Hex(bytes),
+                        "language": row.language as Any? ?? NSNull(),
+                        "origin": origin as Any? ?? NSNull()])
+                }
+                guard texts[door.shown] != nil, door.shown != "gate.manifest.swift" else {
+                    throw PublicationFailure(address: catalog.file + ":1", reason: "Shown is not a declared source in " + door.directory)
+                }
+                var answer = publicationObject(.object(statusPairs(statusAnswer(w, contexts: contexts))))
+                answer["judge_ms"] = NSNull(); answer["wall_ms"] = NSNull()
+                answer["facts"] = parsed.rows.filter { $0.kind == "WorldFile" }.map { $0.path }
+                // Addresses stay source-relative even when a taken file is cached elsewhere.
+                let forms = parsed.rows.filter { $0.role == "forms" }.map { $0.path }
+                let rowGroups = contexts.active
+                    ? contexts.contexts.map { $0.rows.filter { $0.role == "forms" } }
+                    : [parsed.rows.filter { $0.role == "forms" }]
+                let groups = rowGroups.flatMap { rows in
+                    worldsOf(rows.map { ($0, texts[$0.path] ?? "") }).map { $0.map { $0.path } }
+                }
+                let names = [door.shown] + texts.keys.sorted().filter { $0 != door.shown }
+                // v1 Language still has a native reader, but no browser Court
+                // request. Do not let the flat court replace that context after
+                // an edit, even through a second, otherwise writable input.
+                let browserReady = !contexts.active || (!contexts.contexts.isEmpty
+                    && contexts.contexts.allSatisfy { $0.courtContext != nil })
+                let writable = draftPolicy == "ReaderDraft" && browserReady ? parsed.rows.filter {
+                    $0.source != "theirs" && $0.kind != "CarriedFile"
+                        && !drawingInputs(parsed.rows).paths.contains($0.path)
+                }.map(\.path) : []
+                answer["next"] = draftPolicy != "ReaderDraft"
+                    ? "Read-only publication. Change the source repository and publish again."
+                    : writable.isEmpty
+                    ? "This plan has no inputs available for browser drafts. Change the source repository and publish again."
+                    : "Reader drafts stay in this browser for the inputs this plan allows. Source changes need a new publication."
+                var snap: [String: Any] = [:]
+                func json(_ key: String, _ object: Any) { snap[key] = ["body": String(decoding: publicationJSON(object), as: UTF8.self), "type": jsonType] }
+                json("GET /files", ["files": names, "layout": "gate.manifest.swift", "forms": forms,
+                     "world_files": Array(Set(parsed.rows.filter { $0.kind == "WorldFile" }.map(\.path))).sorted(),
+                     "carried": parsed.rows.filter { $0.kind == "CarriedFile" }.map { $0.path }, "worlds": groups,
+                     "drawing_inputs": drawingInputs(parsed.rows).paths,
+                     "drawing_input_refusals": drawingInputs(parsed.rows).bad.map { ["address": $0.address, "claim": $0.claim] },
+                     "documents": Array(Set(parsed.rows.filter { $0.kind == "DocumentFile" }.map(\.path))).sorted(),
+                     "theirs": publicationObject(.object(parsed.rows.filter { $0.source == "theirs" }.map { ($0.path, benchOrigin($0, taken)) })),
+                     "roles": Dictionary(uniqueKeysWithValues: STATUS_ROLES), "opens": [:], "seams": [], "undeclared": [], "overridden": [:],
+                     "personal": NSNull(), "personal_empty": false, "judge_claim": NSNull(), "save_policy": draftPolicy == "ReaderDraft" ? "reader-draft" : "read-only",
+                     "capabilities": ["read_only": names.filter { !writable.contains($0) }, "write": writable]])
+                json("GET /status", answer)
+                json("GET /grammar-contexts", contexts.receipt)
+                var verdict = answer
+                verdict["declarations"] = (answer["world"] as? [String: Any])?["declarations"] ?? NSNull()
+                verdict["premises"] = (answer["world"] as? [String: Any])?["premises"] ?? NSNull()
+                for (name, text) in texts {
+                    snap["GET /world?f=" + publicationQuery(name)] = ["body": text, "type": textType]
+                    var reading = verdict
+                    reading["coverage_scope"] = "declared relations; Swift bodies are unchecked"
+                    if name == "gate.manifest.swift" || kinds[name] == "CarriedFile" {
+                        reading["verdict"] = "unsupported"
+                        reading["unsupported"] = [["id": name, "address": name + ":1", "reason": "structural or carried input; no independent relation court"]]
+                        reading["refusals"] = []
+                    }
+                    json("POST /verdict?f=" + publicationQuery(name), reading)
+                    json("GET /gitstatus?f=" + publicationQuery(name), ["file": name, "git": "source"])
+                }
+                let modules = shelf().map { $0.name }
+                json("GET /shelf", ["modules": modules, "roles": Dictionary(uniqueKeysWithValues: modules.map { ($0, shelfHeadLine($0, "// role:") ?? "") }),
+                    "speaks": Dictionary(uniqueKeysWithValues: modules.map { ($0, shelfHeadLine($0, "// speaks-for:") ?? "") })])
+                for page in shelf() { snap["GET /shelf?m=" + publicationQuery(page.name)] = ["body": presentedWorld(w, page.name), "type": textType] }
+                json("GET /drawing-profile", drawingPlan)
+                json("GET /version", ["gate": gateVersion(), "judge_from": judgeFrom() ?? "", "publication": identity])
+                json("GET /language", ["names": Dictionary(uniqueKeysWithValues: languageNames()), "file": languageFile(), "court": NSNull(), "at": judgeFrom() ?? "", "present": false])
+                json("GET /attention", ["command": "attention", "seams": []])
+                let journal = repoJournal(worldRoot, Set(parsed.rows.map { $0.path }), scope: "world", limit: 200, onlyMe: false)
+                json("GET /log", publicationObject(.object(journalPairs(journal, scope: "world", limit: 200, onlyMe: false,
+                    world: Set(parsed.rows.map { $0.path }), who: identities(worldRoot), nextSaid: "Read-only publication", lastMile: false))))
+                coverage.append(["world": door.directory, "verdict": answer["verdict"] ?? "unsupported", "forms": answer["forms"] ?? [:],
+                    "world_counts": answer["world"] ?? [:], "unsupported": answer["unsupported"] ?? [], "unchecked": parsed.rows.filter { $0.kind == "CarriedFile" }.map { $0.path },
+                    "area": "declared relations; Swift bodies are unchecked"])
+                return ["snapshots": snap, "texts": texts, "groups": groups, "kinds": kinds,
+                        "css": paletteTokens(w) + ladderTokens(w) + registerTokens(w)]
+            }
+            let snap = worldData["snapshots"] as! [String: Any]
+            reply("snapshots/" + door.id + ".json", ["responses": snap])
+            replies["styles/" + door.id + ".css"] = PublicationReply(data: Data((worldData["css"] as! String).utf8), contentType: "text/css")
+            worlds.append(["door": door.name, "id": door.id, "file": door.directory, "name": door.world, "shown": door.shown,
+                "title": door.title, "group": door.group, "caption": door.caption, "kinds": worldData["kinds"]!, "groups": worldData["groups"]!])
+        }
+        // The reader records each input when taking it; delivery follows that
+        // record rather than guessing whether its cache path looks structural.
+        let carriedDrawingHashes = Set(replies.filter { $0.key.hasPrefix("assets/drawing/") }.map { sha256Hex($0.value.data) })
+        for (hash, bytes) in blobs where !carriedDrawingHashes.contains(hash) {
+            replies["inputs/" + hash] = PublicationReply(data: bytes, contentType: "application/octet-stream")
+        }
+        let assets = Dictionary(uniqueKeysWithValues: replies.filter { $0.key.hasPrefix("assets/") }.map { ($0.key, sha256Hex($0.value.data)) })
+        let resources = Dictionary(uniqueKeysWithValues: replies.filter { $0.key.hasPrefix("assets/") || $0.key.hasPrefix("inputs/") || $0.key.hasPrefix("styles/") }.map { ($0.key, sha256Hex($0.value.data)) })
+        var doc: [String: Any] = ["format": "publication/1", "publication": ["id": identity, "entry": entry.name],
+            "manifests": manifests, "records": records, "inputs": inputs, "languages": languagePlans, "worlds": worlds, "routes": routes,
+            "plain_fragments": [], "capabilities": ["read_only": draftPolicy == "ReadOnly", "structure": "read-only-structure", "delivery": delivery],
+            "draft_policy": draftPolicy, "drawing_profile": drawingName, "coverage": coverage,
+            "installed": ["gate": gateVersion(), "organization_revision": runtimeData("bin/organization-court.from").flatMap { String(data: $0, encoding: .utf8)?.components(separatedBy: "\n").first } ?? "", "binary_sha256": FileManager.default.contents(atPath: absPath(CommandLine.arguments[0])).map { sha256Hex($0) } ?? "", "judge_revision": judgeFrom() ?? "", "wasm": assets["assets/vi_court_bytes.js"] ?? "", "stdlib": Dictionary(uniqueKeysWithValues: shelf().map { ($0.name, sha256Hex(Data($0.text.utf8))) })], "assets": assets, "resources": resources]
+        doc["inputs_digest"] = sha256Hex(publicationJSON(["manifests": manifests, "records": records, "inputs": inputs]))
+        let planID = sha256Hex(publicationJSON(doc)); doc["plan_id"] = planID
+        // Every transport sends these bytes, including its declared limitation.
+        for door in doors {
+            let path = "snapshots/" + door.id + ".json"
+            var object = (try? JSONSerialization.jsonObject(with: replies[path]!.data)) as? [String: Any] ?? [:]
+            object["plan_id"] = planID
+            reply(path, object)
+        }
+        // Response receipts follow plan_id: the plan does not hash its own ID.
+        doc["response_sha256"] = Dictionary(uniqueKeysWithValues: replies.filter { $0.key.hasPrefix("snapshots/") }.map { ($0.key, sha256Hex($0.value.data)) })
+        reply("read-plan.json", doc)
+        for route in routes {
+            let door = doors.first { $0.name == route["door"]! }!, path = route["path"]!
+            let depth = path.split(separator: "/").count, prefix = String(repeating: "../", count: depth)
+            var html = ui
+            for asset in ["codemirror.js", "codemirror.css", "judge.js", "renderer.js", "press.js", "drawing-profile.js"] {
+                html = html.replacingOccurrences(of: "\"/" + asset + "\"", with: "\"" + prefix + "assets/" + asset + "\"")
+            }
+            html = html.replacingOccurrences(of: "\"/ladder.css\"", with: "\"" + prefix + "styles/" + door.id + ".css\"")
+            let readers = ["reader-draft.js", "world-court.js", "grammar-policy.js", "court-contexts.js", "vi_court.js", "vi_court_bytes.js"]
+                .map { "<script src=\"" + prefix + "assets/" + $0 + "\"></script>\n" }.joined()
+            let loader = readers + "<script src=\"" + prefix + "assets/publication.js\" data-replies=\"" + prefix + "snapshots/" + door.id + ".json\" data-plan=\"" + planID + "\" data-draft-policy=\"" + draftPolicy + "\"></script>\n"
+            let marker = "<link rel=\"stylesheet\" href=\"" + prefix + "assets/codemirror.css\">"
+            guard html.components(separatedBy: marker).count == 2 else {
+                throw PublicationFailure(address: "web/ui.html:1", reason: "the publication transport has no unique bench boundary")
+            }
+            var transport = loader
+            if let hash = drawingPlan["css_sha256"] as? String {
+                transport += "<link rel=\"stylesheet\" data-drawing-profile href=\"" + prefix + "assets/drawing/" + hash + "/drawing.css\">\n"
+            }
+            html = html.replacingOccurrences(of: marker, with: transport + marker)
+            if draftPolicy == "ReaderDraft" {
+                let boundary = "</div>\n<script src=\"" + prefix + "assets/codemirror.js\">"
+                guard html.components(separatedBy: boundary).count == 2 else {
+                    throw PublicationFailure(address: "web/ui.html:1", reason: "the publication has no unique browser-copy boundary")
+                }
+                let note = "<div id=\"published-note\"><a href=\"#\" id=\"reset-copy\">reset this browser copy</a></div>"
+                html = html.replacingOccurrences(of: boundary, with: note + boundary)
+            }
+            replies[path + "index.html"] = PublicationReply(data: Data(html.utf8), contentType: "text/html; charset=utf-8")
+        }
+        let plan = ReadPlan(document: doc, replies: replies, watched: watched, directories: directories)
+        guard plan.current() else {
+            throw PublicationFailure(address: "read-plan.json:1", reason: "an input changed while building the plan; read again")
+        }
+        PUBLICATION_CACHE = (root, plan)
+        return plan
+    }
+}
+func readPlanResponse(_ plan: ReadPlan, _ method: String, _ path: String, _ query: [String: String], _ body: Data) -> (Int, PublicationReply) {
+    let jsonType = "application/json; charset=utf-8"
+    let publication = plan.document["publication"] as? [String: String] ?? [:]
+    let worlds = plan.document["worlds"] as? [[String: Any]] ?? []
+    let selected = query["world"].flatMap { id in worlds.first { $0["id"] as? String == id } }
+        ?? worlds.first { $0["door"] as? String == publication["entry"] }
+    if method == "GET" {
+        let key = path == "/" || path == "/ui" ? "index.html"
+            : String(path.dropFirst()) + (path.hasSuffix("/") ? "index.html" : "")
+        if let response = plan.replies[key] { return (200, response) }
+    }
+    if method == "GET" || (method == "POST" && path == "/verdict"),
+       let id = selected?["id"] as? String, let bytes = plan.replies["snapshots/" + id + ".json"]?.data,
+       let snapshots = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any],
+       let responses = snapshots["responses"] as? [String: [String: String]] {
+        var key = method + " " + path
+        if ["/world", "/verdict", "/gitstatus"].contains(path) { key += "?f=" + publicationQuery(query["f"] ?? "") }
+        if path == "/language", let file = query["f"] { key += "?f=" + publicationQuery(file) }
+        if path == "/shelf", let name = query["m"] { key += "?m=" + publicationQuery(name) }
+        if method == "POST", responses["GET /world?f=" + publicationQuery(query["f"] ?? "")]?["body"] != String(decoding: body, as: UTF8.self) {
+            return (409, PublicationReply(data: publicationJSON(["verdict": "unsupported", "code": "read-only-structure", "reason": "this publication grants reading"]), contentType: jsonType))
+        }
+        if let response = responses[key], let text = response["body"], let type = response["type"] {
+            return (200, PublicationReply(data: Data(text.utf8), contentType: type))
+        }
+    }
+    let code = method == "GET" ? 404 : 409
+    return (code, PublicationReply(data: publicationJSON(["verdict": "unsupported", "code": "read-only-structure", "reason": "this request has no declared publication reader"]), contentType: jsonType))
+}
+
+func publishDoor(_ raw: [String]) -> Never {
+    let a = raw.filter { $0 != "--json" }
+    guard a.count == 4, a[2] == "-o", !a[1].hasPrefix("-"), !a[3].isEmpty else {
+        cannot("publish needs its repository and named output", "gate publish <repository> -o <site>")
+    }
+    let root = absPath(a[1]), output = absPath(a[3])
+    do {
+        guard leavesRoot(canonicalPath(root), canonicalPath(output)), leavesRoot(canonicalPath(output), canonicalPath(root)) else {
+            throw PublicationFailure(address: "publish:1", reason: "output must be outside the source repository")
+        }
+        let plan = try buildReadPlan(root)
+        let parent = parentPath(output) ?? "."
+        try FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true)
+        let stage = joinPath(parent, ".gate-publish-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(atPath: stage) }
+        for (path, response) in plan.replies {
+            let target = joinPath(stage, path)
+            try FileManager.default.createDirectory(atPath: parentPath(target)!, withIntermediateDirectories: true)
+            try response.data.write(to: URL(fileURLWithPath: target), options: .atomic)
+        }
+        // Validate the finished delivery before touching an existing output.
+        for (path, response) in plan.replies {
+            guard FileManager.default.contents(atPath: joinPath(stage, path)) == response.data else {
+                throw PublicationFailure(address: path + ":1", reason: "published resource differs from its planned bytes")
+            }
+        }
+        let backup = joinPath(parent, ".gate-previous-" + UUID().uuidString)
+        let existed = FileManager.default.fileExists(atPath: output)
+        if existed { try FileManager.default.moveItem(atPath: output, toPath: backup) }
+        do { try FileManager.default.moveItem(atPath: stage, toPath: output) }
+        catch { if existed { try? FileManager.default.moveItem(atPath: backup, toPath: output) }; throw error }
+        if existed { try? FileManager.default.removeItem(atPath: backup) }
+        if raw.contains("--json") {
+            out(String(decoding: publicationJSON(["command": "publish", "site": output, "plan_id": plan.document["plan_id"]!, "format": "publication/1", "delivery": (plan.document["capabilities"] as? [String: Any])?["delivery"] ?? ""]), as: UTF8.self) + "\n")
+        } else {
+            let delivery = (plan.document["capabilities"] as? [String: Any])?["delivery"] as? String ?? ""
+            out("publish: " + output + " · " + delivery + "\n  next: gate serve " + saidPath(root) + "\n")
+        }
+        exit(0)
+    } catch {
+        if raw.contains("--json") {
+            var object = (try? JSONSerialization.jsonObject(with: publicationFailureJSON(error))) as? [String: Any] ?? [:]
+            object["error"] = object["reason"] ?? "publication failed"
+            object["next"] = "repair the addressed input, then gate publish <repository> -o <site>"
+            err(String(decoding: publicationJSON(object), as: UTF8.self) + "\n"); exit(1)
+        }
+        let failure = error as? PublicationFailure
+        cannot((failure?.address ?? "publication:1") + ": " + (failure?.reason ?? String(describing: error)), "repair the input, then gate publish <repository> -o <site>")
     }
 }
 
@@ -11940,12 +14519,21 @@ if args.first == "--version" || args.first == "-v" || args.first == "version" {
         out(compactDumps(.object(pairs)) + "\n")
         exit(0)
     }
-    var lines = ["gate " + gateVersion() + " · judge " + short + " (canon v2)"]
+    // each court speaks its own canon (stdlib/courts.swift): the plain court
+    // two, the certificate court four, the count court its question
+    var lines = ["gate " + gateVersion() + " · judge " + short
+                 + " (plain canon v2 · where canon v4 · count question 1)"]
     if case .object(let shape) = courtShape(),
-       case .raw(let count)? = shape.first(where: { $0.0 == "lines" })?.1 {
-        lines.append("  the court is " + count + " lines in Judge.swift and WhereJudge.swift"
-                   + " and the rest of that repository is worlds it shows itself on, and the "
-                   + "theory it comes from")
+       case .raw(let count)? = shape.first(where: { $0.0 == "lines" })?.1,
+       case .list(let files)? = shape.first(where: { $0.0 == "files" })?.1 {
+        lines.append("  the court is " + count + " lines in the " + String(files.count)
+                   + " files of " + COURT_DIR + ", the files bin/build-cli.sh compiles in, "
+                   + "and the rest of that repository is the theory it comes from")
+    }
+    let orgFrom = joinPath(toolRoot(), "bin/organization-court.from")
+    if let org = readText(orgFrom)?.trimmingCharacters(in: .whitespacesAndNewlines), !org.isEmpty {
+        lines.append("  company court from verification-is-identification-showcase "
+                   + String(org.prefix(12)) + ". `bin/build-organization-judge.sh` builds it")
     }
     if let came = came {
         lines.append("  judge built from verification-is-identification "
@@ -11965,6 +14553,10 @@ if args.first == "--version" || args.first == "-v" || args.first == "version" {
     }
     out(lines.joined(separator: "\n") + "\n")
     exit(0)
+}
+
+if args.first == "publish" {
+    publishDoor(args)
 }
 
 if args.first == "serve" {

@@ -1,11 +1,9 @@
 "use strict";
 
-// THE SECOND JUDGE, ported: a line-for-line JavaScript reading of Sources/Tools/Judge.swift.
-// The Swift judge stays the reference — index.html carries verdicts captured from it and
-// checks this port against them on every load. A drift is a red badge, never a silent lie.
-//
-// The fragment, the table, and the message texts mirror the Swift file exactly: the two
-// ports must refuse with the same premise, character for character.
+// The company's plain court at bin/organization-court.from. Verdicts use the
+// reference fragment and fixed company policy. The organization contracts v0.1
+// and v0.2 bind finite observations, including refusals on foreign forms.
+// Richer records for the bench are inspection only, outside that verdict.
 
 const ranks = new Set(["IndividualContributor", "Lead", "Manager"]);
 const departments = new Set(["Finance", "Engineering", "Sales", "People"]);
@@ -37,41 +35,6 @@ const gatePremises = new Map([
     ["VerifiedAtWorkplace", ["Site", null]],
 ]);
 
-
-// ── THE DOMAIN, READ FROM WHAT WAS PRESENTED. This port was written as a
-// line-for-line mirror of the binary, and it mirrored the table too: one
-// reference world's ranks, departments, workplaces, genders, shares and the
-// axes each of its protocols owes, hard-coded in an arbiter meant to judge any
-// world. That table is a differential seat — the binary's own header calls it
-// the policy stated a second time, on purpose — and that seat is the corpus's
-// business with its reference world, not ours.
-//
-// Everything in it is already said by the forms a world presents: departments
-// are the conformers of `Department`, the axes a protocol owes are its own
-// `associatedtype` lines, a gate's premise is its own `where` clause. So the
-// domain is derived, and the presented form is the better of the two: it says
-// `Home: Department`, naming a declared thing, where the constant said
-// "department", naming a category that exists nowhere.
-//
-// The gates need nothing here: `checkWhereGates` already reads a presented
-// `where` clause and normalises both sides through the dictionary — "the gate
-// is grammar, not domain", as the line that wrote it says. The baked premise
-// map was a second copy of a mechanism that already worked for anybody.
-function domainOf(declarations) {
-    const conformers = new Map();   // protocol -> Set of names that conform
-    const requires = new Map();     // protocol -> [[axis, the form it must be]]
-    for (const [name, declaration] of declarations) {
-        for (const conformance of declaration.conformances) {
-            if (!conformers.has(conformance)) conformers.set(conformance, new Set());
-            conformers.get(conformance).add(name);
-        }
-        if (declaration.axes && declaration.axes.length) {
-            requires.set(name, declaration.axes.map(
-                (axis) => [axis, (declaration.axisKinds || {})[axis] || null]));
-        }
-    }
-    return { conformers, requires };
-}
 
 // a name is what it conforms to, walking the ladder a protocol refines
 function conformsTo(name, form, declarations, seen) {
@@ -139,6 +102,12 @@ function substituteWord(text, word, replacement) {
 
 function parse(file, text, declarations, order, refusals, extras) {
     const stack = [];
+    if (extras && !extras.drawingUnsupported) extras.drawingUnsupported = new Map();
+    function markUnsupported(owner, reason) {
+        if (!owner) return;
+        if (extras) extras.drawingUnsupported.set(owner, reason);
+        if (declarations.has(owner)) declarations.get(owner).drawingUnsupported = reason;
+    }
     let bodyOwner = null;
     let extensionOwner = null;
     let pendingHead = null, pendingHeadLine = null;
@@ -191,6 +160,7 @@ function parse(file, text, declarations, order, refusals, extras) {
             }
             if (bodyOwner) bodyOwner.entries.push({ head, args, line: bufferLine });
         }
+        if (final && rest.replaceAll(";", "").trim() && bodyOwner) bodyOwner.drawingUnsupported = "unread body entry";
         buffer = final ? "" : rest;
         if (closed.length > 0) bufferLine = lineNumber;
     }
@@ -210,6 +180,7 @@ function parse(file, text, declarations, order, refusals, extras) {
         {
             let quoted = false;
             for (let j = 0; j < line.length - 1; j += 1) {
+                if (line[j] === "\\" && quoted) { j += 1; continue; }
                 if (line[j] === '"') quoted = !quoted;
                 else if (!quoted && line[j] === "/" && line[j + 1] === "/") {
                     line = line.slice(0, j).trim();
@@ -253,16 +224,22 @@ function parse(file, text, declarations, order, refusals, extras) {
             continue;
         }
 
+        if (/\bstatic\s+(?:var|let|func)\s+(?!body\b|typeName\b)/.test(line)) {
+            const owner = extensionOwner !== null ? declarations.get(extensionOwner) : stack[stack.length - 1];
+            markUnsupported(extensionOwner || (owner && owner.qualified), "executable member outside the drawing subset");
+        }
         if (extensionOwner !== null) {
-            const literal = line.match(/^(?:public )?static var typeName: String \{ "([^"]*)" \}$/);
+            const literal = line.match(/^(?:public )?static var typeName: String \{ "((?:[^"\\]|\\.)*)" \}$/);
             if (literal) {
-                extras.literals.set(extensionOwner, { value: literal[1], line: number });
+                extras.literals.set(extensionOwner, { ...decodeSwiftLiteral(literal[1]), file, line: number });
                 continue;
             }
             if (line === "}") {
                 extensionOwner = null;
                 continue;
             }
+            const owner = declarations.get(extensionOwner);
+            markUnsupported(extensionOwner, "extension outside the drawing subset");
             refusals.push({ file, line: number,
                 premise: "outside the fragment: `" + line.slice(0, 60) + "`" });
             continue;
@@ -279,8 +256,12 @@ function parse(file, text, declarations, order, refusals, extras) {
                 .replace("extension ", "").trim();
             const colon = head.indexOf(":");
             const owner = (colon >= 0 ? head.slice(0, colon) : head).trim();
+            if (/\bstatic\s+(?:var|let|func)\s+(?!typeName\b)/.test(line) || (/\bstatic\s+(?:var|let|func)\b/.test(line) && !/static var typeName: String \{ "(?:[^"\\]|\\.)*" \}/.test(line))) {
+                const standing = declarations.get(owner);
+                markUnsupported(owner, "executable extension outside the drawing subset");
+            }
             const literal = line.slice(open + 1).match(
-                /(?:public )?static var typeName: String \{ "([^"]*)" \}/);
+                /(?:public )?static var typeName: String \{ "((?:[^"\\]|\\.)*)" \}/);
             // ── AND ONLY WHEN IT CARRIES ONE. This branch was written for the
             // one shape gate itself emits and swallowed every one-line extension
             // it saw, `continue`ing past a gated conformance joined from two
@@ -288,7 +269,7 @@ function parse(file, text, declarations, order, refusals, extras) {
             // Every where-gate in the shelf stopped being read the day this was
             // added, and nothing said a word: no check covered them.
             if (literal) {
-                extras.literals.set(owner, { value: literal[1], line: number });
+                extras.literals.set(owner, { ...decodeSwiftLiteral(literal[1]), file, line: number });
                 continue;
             }
         }
@@ -453,7 +434,9 @@ function parse(file, text, declarations, order, refusals, extras) {
                 continue;
             }
             const declaration = { name, qualified, parent, conformances, params, paramKinds,
-                line: number, aliases: new Map(), entries: [] };
+                file, line: number, aliases: new Map(), entries: [] };
+            if (/\bstatic\s+(?:var|let|func)\b/.test(line)) declaration.drawingUnsupported = "inline executable member outside the drawing subset";
+            if (extras && extras.drawingUnsupported.has(qualified)) declaration.drawingUnsupported = extras.drawingUnsupported.get(qualified);
             declarations.set(qualified, declaration);
             order.push(qualified);
             // what the head's own line said inside its braces is what it states
@@ -505,7 +488,7 @@ function parse(file, text, declarations, order, refusals, extras) {
                 continue;
             }
             const declaration = { name, qualified: name, parent: null, conformances,
-                params: [], line: number, aliases: new Map(), entries: [], axes: [], axisKinds: {} };
+                params: [], file, line: number, aliases: new Map(), entries: [], axes: [], axisKinds: {} };
             declarations.set(name, declaration);
             order.push(name);
             if (!selfClosed) stack.push(declaration);
@@ -599,6 +582,124 @@ function parse(file, text, declarations, order, refusals, extras) {
 
         refusals.push({ file, line: number,
             premise: "outside the fragment: `" + line.slice(0, 60) + "`" });
+    }
+}
+
+// The reference reader deliberately preserves the pinned Swift reader's
+// narrow spelling and current limitations. In particular it does not read
+// protocols, inline extensions, private aliases or trailing comments as syntax.
+function parseCompany(file, text, declarations, order, refusals) {
+    const stack = [];
+    let bodyOwner = null;
+    let buffer = "";
+    let bufferLine = 0;
+    function drainEntries(lineNumber, final) {
+        let depth = 0;
+        let current = "";
+        const closed = [];
+        for (const character of buffer) {
+            current += character;
+            if (character === "<") depth += 1;
+            if (character === ">") depth -= 1;
+            if (depth === 0 && current.endsWith(".self")) {
+                closed.push(current);
+                current = "";
+            }
+            if (depth === 0 && (character === ";" || character === " ")
+                && current.trim() === "") {
+                current = "";
+            }
+        }
+        const rest = current;
+        for (const closedEntry of closed) {
+            let entry = closedEntry.slice(0, -5);
+            entry = trimEntry(entry);
+            let head;
+            const args = [];
+            const open = entry.indexOf("<");
+            if (open >= 0) {
+                head = entry.slice(0, open);
+                const inner = entry.slice(open + 1, -1);
+                let argumentDepth = 0;
+                let piece = "";
+                for (const character of inner) {
+                    if (character === "<") argumentDepth += 1;
+                    if (character === ">") argumentDepth -= 1;
+                    if (character === "," && argumentDepth === 0) {
+                        args.push(piece.trim());
+                        piece = "";
+                    } else {
+                        piece += character;
+                    }
+                }
+                args.push(piece.trim());
+            } else {
+                head = entry;
+            }
+            if (bodyOwner) bodyOwner.entries.push({ head, args, line: bufferLine });
+        }
+        buffer = final ? "" : rest;
+        if (closed.length > 0) bufferLine = lineNumber;
+    }
+
+
+    for (const [index, raw] of text.split("\n").entries()) {
+        const number = index + 1;
+        const line = raw.trim();
+        if (!line || line.startsWith("//") || line.startsWith("import ")
+            || line.startsWith("@StructureBuilder")) continue;
+        if (bodyOwner !== null) {
+            if (line === "}") {
+                drainEntries(number, true);
+                bodyOwner = null;
+            } else {
+                if (!buffer) bufferLine = number;
+                buffer += line + " ";
+                drainEntries(number, false);
+            }
+            continue;
+        }
+        if (line.startsWith("public enum ") || line.startsWith("enum ")) {
+            const head = line.replaceAll("public enum ", "").replaceAll("enum ", "")
+                .replaceAll(" {", "");
+            const colon = head.indexOf(":");
+            const name = (colon < 0 ? head : head.slice(0, colon)).trim();
+            const conformances = colon < 0 ? []
+                : head.slice(colon + 1).split(",").filter(Boolean).map(x => x.trim());
+            const parent = stack.length ? stack[stack.length - 1].qualified : null;
+            const qualified = parent === null ? name : parent + "." + name;
+            const declaration = { name, qualified, parent, conformances, line: number,
+                aliases: new Map(), entries: [] };
+            declarations.set(qualified, declaration);
+            order.push(qualified);
+            stack.push(declaration);
+            continue;
+        }
+        if (line.startsWith("public typealias ")) {
+            const body = line.replaceAll("public typealias ", "");
+            const equals = body.indexOf("=");
+            if (equals > 0 && equals < body.length - 1 && stack.length) {
+                stack[stack.length - 1].aliases.set(body.slice(0, equals).trim(),
+                    { target: body.slice(equals + 1).trim(), line: number });
+            } else {
+                refusals.push({ file, line: number,
+                    premise: "a typealias stands outside every declaration" });
+            }
+            continue;
+        }
+        if (line.startsWith("public static var body: some Structure {")) {
+            bodyOwner = stack.length ? stack[stack.length - 1] : null;
+            buffer = "";
+            continue;
+        }
+        if (line === "}") {
+            if (stack.length) stack.pop();
+            else refusals.push({ file, line: number,
+                premise: "a closing brace with nothing open" });
+            continue;
+        }
+        refusals.push({ file, line: number,
+            premise: "outside the fragment: `" + Array.from(line).slice(0, 60).join("") + "`" });
     }
 }
 
@@ -738,18 +839,15 @@ function coordinate(key, name, declarations, values) {
 
 // ── pass 2: premises against the table ──
 
-function check(file, declarations, order, values, refusals, extras, vocabulary) {
+function check(file, declarations, order, values, refusals) {
     let premises = 0;
     const gateTouches = values.gateTouches;
-    // what this world presented outranks anything this port was born knowing
-    const domain = domainOf(declarations);
 
     for (const qualified of order) {
         const declaration = declarations.get(qualified);
 
         for (const conformance of declaration.conformances) {
-            const requirements = domain.requires.get(conformance)
-                ?? conformanceRequirements.get(conformance);
+            const requirements = conformanceRequirements.get(conformance);
             if (!requirements) continue;
             for (const [key, wanted] of requirements) {
                 premises += 1;
@@ -767,10 +865,7 @@ function check(file, declarations, order, values, refusals, extras, vocabulary) 
                         premise: declaration.name + "." + key + ": " + reason });
                     continue;
                 }
-                const presented = declarations.has(wanted);
-                const landed = presented
-                    ? (conformsTo(settled, wanted, declarations) ? wanted : category(settled, declarations))
-                    : category(settled, declarations);
+                const landed = category(settled, declarations);
                 if (landed !== wanted) {
                     refusals.push({ file, line: alias.line,
                         premise: conformance + " requires " + key + " in " + wanted + ": "
@@ -833,21 +928,12 @@ function check(file, declarations, order, values, refusals, extras, vocabulary) 
                 if (!found) {
                     found = isSeed(entry.head);
                 }
-                if (!found && extras) {
-                    found = extras.topAliases.has(entry.head)
-                        || extras.literals.has(entry.head);
-                }
-                if (!found && vocabulary) {
-                    found = vocabulary.seeds.has(entry.head);
-                }
                 if (!found) {
                     refusals.push({ file, line: entry.line,
                         premise: "the entry " + entry.head + " resolves to nothing" });
                 }
                 continue;
             }
-            if (vocabulary && vocabulary.generics.has(entry.head)) continue;
-            if (extras && extras.topAliases.has(entry.head)) continue;
             refusals.push({ file, line: entry.line,
                 premise: "an unknown gate: " + entry.head });
         }
@@ -855,246 +941,65 @@ function check(file, declarations, order, values, refusals, extras, vocabulary) 
     return premises;
 }
 
-// ── conditional conformances: normalize both sides, compare at every use ──
+// ── The where court and the count court are not ported. gate carries the
+// contract's Rust sample of both, a second implementation held to the Swift
+// court by the suite, built for wasm32 (bin/court-wasm, bin/judge-wasm.js); the
+// plain court here reads no `where` clause. A hand-written reading of the
+// canon beside it would be a third one, held by nothing.
 
-// a term settles to its normal form: top aliases unfold (generic ones by
-// substitution), a dotted head reads the owner's axis, arguments settle first
-function normalizeTerm(term, declarations, topAliases, depth) {
-    if (depth > 64) return term.trim();
-    term = term.trim();
-    const angle = term.indexOf("<");
-    let head = angle >= 0 ? term.slice(0, angle).trim() : term;
-    let args = [];
-    if (angle >= 0) {
-        const inner = term.slice(angle + 1, term.lastIndexOf(">"));
-        args = splitTopLevel(inner)
-            .map((piece) => normalizeTerm(piece, declarations, topAliases, depth + 1));
+// Files share a dictionary and memo. The reference checks the accumulated
+// order after each file, including earlier declarations, rather than summing
+// independent judgments. The multi-file contract records that behavior.
+function judgeFiles(files) {
+    const started = performance.now();
+    const declarations = new Map(), order = [], refusals = [];
+    const values = { settled: new Map(), refused: new Map(), lookups: 0,
+        readers: new Map(), gateTouches: new Map() };
+    let premises = 0;
+    for (const { file, text } of files) {
+        parseCompany(file, text, declarations, order, refusals);
+        premises += check(file, declarations, order, values, refusals);
     }
-    if (head.includes(".")) {
-        const dot = head.indexOf(".", head.includes("<") ? angleSpan(head, head.indexOf("<")) + head.indexOf("<") - 1 : 0);
-        const ownerSpelled = dot >= 0 ? head.slice(0, dot) : head;
-        const axes = dot >= 0 ? head.slice(dot + 1).split(".") : [];
-        let current = normalizeTerm(ownerSpelled, declarations, topAliases, depth + 1);
-        for (const axisName of axes) {
-            // the owner may be a generic instance: read the bare declaration's
-            // axis and substitute the instance arguments into it
-            const ownerAngle = current.indexOf("<");
-            const ownerHead = ownerAngle >= 0 ? current.slice(0, ownerAngle).trim() : current;
-            const ownerArgs = ownerAngle >= 0
-                ? splitTopLevel(current.slice(ownerAngle + 1, current.lastIndexOf(">")))
-                : [];
-            const owner = declarations.get(ownerHead);
-            const axis = owner && owner.aliases.get(axisName);
-            if (!axis) return term;
-            let target = axis.target;
-            (owner.params || []).forEach((parameter, index) => {
-                if (index < ownerArgs.length) {
-                    target = substituteWord(target, parameter, ownerArgs[index]);
-                }
-            });
-            current = normalizeTerm(target, declarations, topAliases, depth + 1);
-        }
-        return args.length > 0 ? current + "<" + args.join(", ") + ">" : current;
-    }
-    const top = topAliases ? topAliases.get(head) : null;
-    if (top) {
-        const params = top.params || [];
-        if (params.length === 0 && args.length === 0) {
-            return normalizeTerm(top.target, declarations, topAliases, depth + 1);
-        }
-        if (params.length > 0 && params.length === args.length) {
-            let body = top.target;
-            params.forEach((parameter, index) => {
-                body = substituteWord(body, parameter, args[index]);
-            });
-            return normalizeTerm(body, declarations, topAliases, depth + 1);
-        }
-    }
-    // the kit's own structural alias: `Twice<S> = Plus<S, S>` (Primitive.swift),
-    // unfolded here so a stated pair and its shorthand settle to one spelling
-    if (head === "Twice" && args.length === 1) {
-        return "Plus<" + args[0] + ", " + args[0] + ">";
-    }
-    // the kit's stated rungs unfold to their own compositions
-    // (Spectrum.swift, Rung0..Rung8), so a sum of rungs and a rung of the
-    // same count settle to one spelling
-    const kitRungs = new Map([
-        ["Rung0", "Never"], ["Rung1", "Unit"], ["Rung2", "Twice<Unit>"],
-        ["Rung3", "Plus<Twice<Unit>, Unit>"], ["Rung4", "Twice<Twice<Unit>>"],
-        ["Rung5", "Plus<Twice<Twice<Unit>>, Unit>"],
-        ["Rung6", "Twice<Plus<Twice<Unit>, Unit>>"],
-        ["Rung7", "Plus<Twice<Twice<Unit>>, Plus<Twice<Unit>, Unit>>"],
-        ["Rung8", "Twice<Twice<Twice<Unit>>>"],
-    ]);
-    if (kitRungs.has(head) && args.length === 0) {
-        return normalizeTerm(kitRungs.get(head), declarations, topAliases, depth + 1);
-    }
-    // the lattice's numerals unfold to their one written definition
-    // (Primitive.swift, the doubling ladder), so a judge counts them without
-    // knowing any number but one and nothing
-    const kitNumerals = new Map([
-        ["U1", "Unit"], ["U2", "Twice<U1>"], ["U4", "Twice<U2>"],
-        ["U8", "Twice<U4>"], ["U16", "Twice<U8>"], ["U32", "Twice<U16>"],
-        ["U64", "Twice<U32>"], ["U128", "Twice<U64>"], ["U256", "Twice<U128>"],
-        ["U512", "Twice<U256>"],
-    ]);
-    if (kitNumerals.has(head) && args.length === 0) {
-        return normalizeTerm(kitNumerals.get(head), declarations, topAliases, depth + 1);
-    }
-    return args.length > 0 ? head + "<" + args.join(", ") + ">" : head;
+    return { declarations: order.length, lookups: values.lookups, premises,
+        milliseconds: performance.now() - started, refusals,
+        parsed: { declarations, order, literals: new Map(), topAliases: new Map(),
+            readers: values.readers, gateTouches: values.gateTouches } };
 }
 
-// ── the counting canon: two spellings of one number are one term ──
-// A mirror of the reference judge's arithmetic pass (WhereJudge.swift): after
-// the structural canon, a Plus tree is flattened to its leaves, the counted
-// leaves fold into one numeral (Unit is one, Never is nothing), a Times of two
-// numerals is their product, and the symbolic leaves are sorted, so 7 + 20 and
-// 27 settle to the same term. The pass knows two counts, one and nothing: a
-// world that wants judged arithmetic spells its own numerals as file aliases
-// over Unit and Twice, and the structural canon unfolds them like any alias.
-
-function parseCanonTree(text) {
-    text = text.trim();
-    const angle = text.indexOf("<");
-    if (angle < 0) return { head: text, args: [] };
-    const head = text.slice(0, angle).trim();
-    const inner = text.slice(angle + 1, text.lastIndexOf(">"));
-    return { head, args: splitTopLevel(inner).map(parseCanonTree) };
-}
-
-function serializeCanonTree(node) {
-    if (node.args.length === 0) return node.head;
-    return node.head + "<" + node.args.map(serializeCanonTree).join(", ") + ">";
-}
-
-function countedLeaf(node) {
-    if (node.args.length > 0) return null;
-    if (node.head === "Unit") return 1;
-    if (node.head === "Never") return 0;
-    if (node.head.startsWith("#")) return parseInt(node.head.slice(1), 10);
-    return null;
-}
-
-function arithmeticFold(node) {
-    const folded = { head: node.head, args: node.args.map(arithmeticFold) };
-    const whole = countedLeaf(folded);
-    if (whole !== null) return { head: "#" + whole, args: [] };
-    // Succ is NOT folded here, and the omission is the law, not an oversight:
-    // the reference's counted leaves are Unit, Never, and a numeral, and its own
-    // comment says the port's judge mirrors this pass. A step of the numeral
-    // ladder stays a symbolic leaf on both sides, so two numbers spelled through
-    // different ladders are two terms — the world spells one ladder instead.
-    if (folded.head === "Times" && folded.args.length === 2) {
-        const left = countedLeaf(folded.args[0]);
-        const right = countedLeaf(folded.args[1]);
-        if (left !== null && right !== null) return { head: "#" + (left * right), args: [] };
-    }
-    if (folded.head !== "Plus" || folded.args.length !== 2) return folded;
-    const leaves = [];
-    let count = 0;
-    const pile = [...folded.args];
-    while (pile.length > 0) {
-        const piece = pile.pop();
-        if (piece.head === "Plus" && piece.args.length === 2) {
-            pile.push(...piece.args);
-            continue;
+function decodeSwiftLiteral(raw) {
+    // Swift's ordinary escaped literals; interpolation and other escapes are
+    // outside this reader, never left as invented literal text.
+    try { return {value: raw.replace(/\\(u\{[0-9a-fA-F]+\}|[\s\S])/g, (_, escape) => {
+        const simple = {"0":"\0", "n":"\n", "r":"\r", "t":"\t", '"':'"', "'":"'", "\\":"\\"};
+        if (Object.hasOwn(simple, escape)) return simple[escape];
+        if (/^u\{[0-9a-fA-F]+\}$/.test(escape)) {
+            const code = parseInt(escape.slice(2, -1), 16);
+            if (code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff)) return String.fromCodePoint(code);
         }
-        const n = countedLeaf(piece);
-        if (n !== null) count += n; else leaves.push(piece);
-    }
-    leaves.sort((a, b) => serializeCanonTree(a) < serializeCanonTree(b) ? -1 : 1);
-    if (leaves.length === 0) return { head: "#" + count, args: [] };
-    if (count > 0) leaves.push({ head: "#" + count, args: [] });
-    let result = leaves.pop();
-    while (leaves.length > 0) {
-        result = { head: "Plus", args: [leaves.pop(), result] };
+        throw new Error("unsupported Swift string escape: " + escape);
+    })}; } catch (error) { return {value: "", unsupported: error.message}; }
+}
+function drawingParse(files) {
+    const declarations = new Map(), order = [], refusals = [];
+    const extras = {literals: new Map(), topAliases: new Map()};
+    for (const {file, text} of files) parse(file, text, declarations, order, refusals, extras);
+    return {declarations, order, ...extras, parseRefusals: refusals};
+}
+
+function judge(file, text, vocabulary) {
+    const result = judgeFiles([{ file, text }]);
+    {
+        // The bench needs records outside the company's fragment. These are
+        // inspection data, never additional premises or a wider plain verdict.
+        const declarations = new Map(), order = [];
+        const extras = { literals: new Map(), topAliases: new Map() };
+        parse(file, text, declarations, order, [], vocabulary ? extras : null);
+        result.parsed = { ...result.parsed, declarations, order,
+            literals: extras.literals, topAliases: extras.topAliases };
     }
     return result;
 }
 
-function arithmeticCanon(text) {
-    return serializeCanonTree(arithmeticFold(parseCanonTree(text)));
-}
-
-// every gated head found in a term is checked where it stands: substitution
-// of the use's arguments into the stated equivalences, then one comparison
-function checkWhereGates(file, declarations, topAliases, refusals) {
-    let checked = 0;
-    const gated = new Map();
-    for (const declaration of declarations.values()) {
-        if (declaration.whereGates) gated.set(declaration.name, declaration);
-    }
-    if (gated.size === 0) return 0;
-
-    function walkTerm(term, line, certificate) {
-        term = term.trim();
-        const angle = term.indexOf("<");
-        const head = angle >= 0 ? term.slice(0, angle).trim() : term;
-        const args = angle >= 0
-            ? splitTopLevel(term.slice(angle + 1, term.lastIndexOf(">")))
-            : [];
-        for (const argument of args) walkTerm(argument, line, certificate);
-        const owner = gated.get(head);
-        if (!owner || args.length !== (owner.params || []).length) return;
-        for (const gate of owner.whereGates) {
-            for (const condition of gate.conditions) {
-                checked += 1;
-                let left = condition.left;
-                let right = condition.right;
-                (owner.params || []).forEach((parameter, index) => {
-                    left = substituteWord(left, parameter, args[index]);
-                    right = substituteWord(right, parameter, args[index]);
-                });
-                const leftCanon = arithmeticCanon(
-                    normalizeTerm(left, declarations, topAliases, 0));
-                const rightCanon = arithmeticCanon(
-                    normalizeTerm(right, declarations, topAliases, 0));
-                if (leftCanon !== rightCanon) {
-                    const spell = (written, canon) => canon === written
-                        ? "`" + written + "`"
-                        : "`" + written + "` (aka `" + canon + "`)";
-                    refusals.push({ file, line,
-                        premise: "`" + (certificate || term) + "` requires the types "
-                            + spell(left, leftCanon) + " and "
-                            + spell(right, rightCanon) + " be equivalent" });
-                }
-            }
-        }
-    }
-
-    for (const [key, alias] of topAliases || []) {
-        if ((alias.params || []).length > 0) continue;
-        walkTerm(alias.target, alias.line, key + " = " + alias.target);
-    }
-    for (const declaration of declarations.values()) {
-        for (const [key, alias] of declaration.aliases) {
-            walkTerm(alias.target, alias.line);
-        }
-    }
-    return checked;
-}
-
-// ── one full judgment ──
-
-function judge(file, text, vocabulary) {
-    const started = performance.now();
-    const declarations = new Map();
-    const order = [];
-    const refusals = [];
-    const extras = { literals: new Map(), topAliases: new Map() };
-    const values = { settled: new Map(), refused: new Map(), lookups: 0,
-        readers: new Map(), gateTouches: new Map() };
-    parse(file, text, declarations, order, refusals, vocabulary ? extras : null);
-    let premises = check(file, declarations, order, values, refusals, extras, vocabulary);
-    premises += checkWhereGates(file, declarations, extras.topAliases, refusals);
-    const milliseconds = performance.now() - started;
-    return { declarations: order.length, lookups: values.lookups, premises,
-        milliseconds, refusals,
-        parsed: { declarations, order, literals: extras.literals,
-            topAliases: extras.topAliases,
-            readers: values.readers, gateTouches: values.gateTouches } };
-}
-
-// conformsTo travels with the verdict: the bench asks the same walk this file
-// judges by, so an offer and a refusal cannot disagree about what a kind is.
-if (typeof module !== "undefined") { module.exports = { judge, conformsTo }; }
+// The bench uses this walk for its offers over inspection records, not as
+// a general conformance judgment by the company's plain court.
+if (typeof module !== "undefined") { module.exports = { judge, judgeFiles, conformsTo, drawingParse }; }

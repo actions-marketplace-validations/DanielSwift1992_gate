@@ -11,6 +11,7 @@ jobs:
         with:
           # the changelog pair reads `git tag`: a shallow checkout
           # without tags starves that reader and the red blames the log
+          fetch-depth: 0
           fetch-tags: true
       # the pinned checkout predates that input and ignored it in silence:
       # the tags are fetched by a word this job can see running
@@ -20,7 +21,9 @@ jobs:
       # toolchain is installed here on purpose
       # the judge is rebuilt from the public theory corpus at the pin,
       # so the battery never trusts a stale vendored binary
-      - run: bin/build-judge.sh d74e258
+      - run: bin/build-judge.sh "$(cat bin/gate-judge.from)"
+      # and the company's plain court from the showcase at its own pin
+      - run: bin/build-organization-judge.sh
       # the same tee as linux: this job went red once with its log closed
       # and its mouth shut, and a red nobody can read is a red that gets
       # guessed at. One mechanism, both platforms.
@@ -46,10 +49,17 @@ jobs:
           curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -d "$BODY" > /dev/null
-      # the camera's subject: the battery above compiles the vein into its
-      # own scratch and sweeps it, so a fresh runner holds no binary here.
-      # The shot is of this revision's bench, and the subject is built first.
-      - run: bin/build-cli.sh
+          # and every FAIL with the lines it said travels as a public annotation,
+          # since a status holds 138 letters and the log needs a token
+          python3 -c 'import sys; t=open("/tmp/smoke-out.txt",encoding="utf-8",errors="replace").read().splitlines(); k=[]; on=False
+          for l in t:
+              on = l.startswith("FAIL") or (on and l.startswith(" "))
+              if on and len(k)<120: k.append(l)
+          print("::error title=what the battery said::"+"\n".join(k or t[-40:]).replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
+      # The battery builds this revision's healthy carrier once and holds its
+      # hash through the late build check. Photograph that same binary rather
+      # than compiling identical sources a third time in this job.
+      - run: test -x bin/gate-cli && bin/gate-cli --version
       # a fresh shot of the bench on every run, downloadable from the run's
       # artifacts. The battery holds docs/bench.png.from to web/ui.html, so a
       # stale committed picture is already red above; committing the fresh
@@ -74,7 +84,11 @@ jobs:
             docs/bench.png
             docs/bench.png.from
   linux:
-    runs-on: ubuntu-latest
+    # the image is named, not "latest": ubuntu-latest began moving to Ubuntu 26
+    # on 19 October 2026 and the battery went red on the linux job (and the
+    # action job, which downloads the released linux binary) with no change in
+    # this tree. A named image moves when somebody here moves it.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       statuses: write
@@ -83,6 +97,7 @@ jobs:
         with:
           # the changelog pair reads `git tag`: a shallow checkout
           # without tags starves that reader and the red blames the log
+          fetch-depth: 0
           fetch-tags: true
       # the pinned checkout predates that input and ignored it in silence:
       # the tags are fetched by a word this job can see running
@@ -95,10 +110,21 @@ jobs:
       - run: |
           command -v swift || { echo "the runner image no longer carries swift; install a toolchain step here"; exit 1; }
           swift --version
-      - run: bin/build-judge.sh d74e258
+      - run: bin/build-judge.sh "$(cat bin/gate-judge.from)"
+      - run: bin/build-organization-judge.sh
       - run: |
           python3 tests/smoke.py 2>&1 | tee /tmp/smoke-out.txt
           exit ${PIPESTATUS[0]}
+      # and the vein the battery built here carries its own Swift: the
+      # binary the release ships from this platform is this one
+      - run: |
+          test -x bin/gate-cli || { echo "no vein here to check: the battery built none"; exit 1; }
+          bin/gate-cli --version
+          DEPS="$(ldd bin/gate-cli)" || { echo "ldd could not read bin/gate-cli"; exit 1; }
+          printf '%s\n' "$DEPS"
+          if printf '%s\n' "$DEPS" | grep -E 'libswift|libFoundation|lib_Foundation|libdispatch|libBlocksRuntime'; then
+            echo "bin/gate-cli links the Swift runtime of this runner"; exit 1
+          fi
       # the first red line travels out as a commit status, because the job
       # log is not readable without a token and a failure nobody can read
       # is a failure that gets guessed at instead of fixed
@@ -129,6 +155,13 @@ jobs:
           curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -d "$BODY" > /dev/null
+          # and every FAIL with the lines it said travels as a public annotation,
+          # since a status holds 138 letters and the log needs a token
+          python3 -c 'import sys; t=open("/tmp/smoke-out.txt",encoding="utf-8",errors="replace").read().splitlines(); k=[]; on=False
+          for l in t:
+              on = l.startswith("FAIL") or (on and l.startswith(" "))
+              if on and len(k)<120: k.append(l)
+          print("::error title=what the battery said::"+"\n".join(k or t[-40:]).replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
   # ── AND THE REVIEWER'S ROAD RUNS WHERE THE TOOL IS. This walk had a job of
   # its own that checked out and ran, because the CLI was python and needed
   # nothing built. The tool is a binary now, so the road runs in the job that
@@ -142,8 +175,53 @@ jobs:
   # compiles there and the binary answers the one question the python side asks
   # it. Everything past that is measured by the battery on the platforms that
   # have one, until this one grows its own.
+  playground:
+    name: playground (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    # Run 39830404651 measured the contracts at 1474 s on Linux and 1172 s
+    # on macOS; builds cost 307/261 s. Keep 2100 s inside 45 minutes for the
+    # whole job. The ordinary battery measured 925/927 s on that same run.
+    # The ordinary battery keeps its separate 2400 s deadline.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - run: git fetch --tags --quiet --force || true
+      - name: an isolated temp and the runner's toolchain
+        run: |
+          mkdir -p "$RUNNER_TEMP/gate-playground/me"
+          echo "TMPDIR=$RUNNER_TEMP/gate-playground" >> "$GITHUB_ENV"
+          echo "GATE_ME=$RUNNER_TEMP/gate-playground/me" >> "$GITHUB_ENV"
+          command -v swift
+          swift --version
+          df -h .
+          python3 -c 'import shutil; assert shutil.disk_usage(".").free >= 5*2**30, "less than 5 GiB before world builds"'
+      - run: bin/build-judge.sh "$(cat bin/gate-judge.from)"
+      - run: bin/build-organization-judge.sh
+      - run: bin/build-cli.sh
+      - name: the complete published world contracts
+        run: python3 tests/playground_runner.py --timeout 2100 --log "$RUNNER_TEMP/playground-out.txt"
+      - if: always()
+        name: the full world log
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4
+        with:
+          name: playground-${{ matrix.os }}
+          path: ${{ runner.temp }}/playground-out.txt
+          if-no-files-found: warn
+
   windows-vein:
     runs-on: windows-latest
+    # the walk bounds each call; the job bounds the walk, so a stuck runner
+    # ends red with its status instead of holding the queue for six hours
+    timeout-minutes: 45
     permissions:
       contents: read
       statuses: write
@@ -273,9 +351,19 @@ jobs:
           curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -d "$BODY2" > /dev/null
+          # ── AND THE WHOLE WALK TRAVELS AS AN ANNOTATION. Three statuses of
+          # 138 characters named the failing verb on 21.10 and still not why it
+          # failed. An annotation is public through the check-runs API, needs
+          # no token to read, and holds the road's every FAIL with its own out
+          # and err lines, so the next repair starts from what the machine said.
+          python -c 'import sys; t=open("vein-out.txt",encoding="utf-8",errors="replace").read().splitlines(); i=next((n for n,l in enumerate(t) if l.startswith("FAIL")),max(0,len(t)-60)); s="\n".join(t[i:i+80]); print("::error title=what the windows road said::"+s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"))'
   pages:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    # the image is named, not "latest": ubuntu-latest began moving to Ubuntu 26
+    # on 19 October 2026 and the battery went red on the linux job (and the
+    # action job, which downloads the released linux binary) with no change in
+    # this tree. A named image moves when somebody here moves it.
+    runs-on: ubuntu-24.04
     # ── AND TWO PUSHES DO NOT RACE FOR ONE DEPLOYMENT. There is one Pages site
     # and one deployment at a time; without a group, a second push while the
     # first is deploying fails the second, and the run goes red for a reason
@@ -293,32 +381,36 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
       # ── AND THE PAGE IS BUILT BY THE TOOL, SO THE TOOL IS BUILT FIRST. This
       # job asked the shim on a clean checkout, which can only say where to get
       # a binary: it worked while the CLI was python and needed nothing built.
       # Swift comes with the runner image, the same way the linux job leans on
       # it, and the guard there says so loudly if it ever leaves.
-      - run: bin/build-cli.sh
+      - name: build the pages binary
+        id: build_cli
+        run: |
+          bin/build-cli.sh 2>&1 | tee pages-cli.txt
+          exit ${PIPESTATUS[0]}
       # the published bench: the same page, the same browser judges, and the
       # server's own answers recorded from a live serve at build time. The
-      # build itself is a Linux measure: a demo is born and served under the
-      # node port on this runner before anything is published.
-      - run: python3 bin/build-pages.py _site
-      # the road test: the published page walks the user's own road headless,
-      # type to offer to red to green to kept, and refuses to deploy a page
-      # where any step of it falls over
-      - run: |
-          BROWSER=$(command -v google-chrome || command -v chromium-browser || command -v chromium)
-          # the camera's own words survive: `2>/dev/null` here meant a browser
-          # that could not start failed this step with no reason printed, which
-          # is the shape bin/shoot-bench.sh carried until this phase
-          "$BROWSER" --headless --disable-gpu --no-sandbox --virtual-time-budget=15000 \
-            --dump-dom "file://$PWD/_site/index.html?f=ownership.swift:84&roadtest=1" \
-            2>/tmp/road-err.txt | grep -q "ROAD ALL GREEN" \
-            || { echo "the road test did not reach ROAD ALL GREEN. What the browser said:"; \
-                 tail -5 /tmp/road-err.txt; exit 1; }
-      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9   # v5.0.0
+      # Gate owns its root world; showcase owns the playground catalog.
+      # Both are selected inputs to the same publisher, never created here.
+      - name: build the site
+        id: build_site
+        run: |
+          python3 bin/build-pages.py _site --source examples/codeowners --worlds 2>&1 | tee pages-build.txt
+          exit ${PIPESTATUS[0]}
+      # The sample's input/offer/refusal/save walk is an external harness.
+      # Its fixture and script never enter the artifact being deployed.
+      - name: walk the site
+        id: roadtest
+        run: |
+          python3 tests/roadtest.py --site _site 2>&1 | tee pages-roadtest.txt
+          exit ${PIPESTATUS[0]}
+      - id: upload
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9   # v5.0.0
         with:
           path: _site
       # ── AND PUBLISHING IS ASKED ABOUT BEFORE IT IS ATTEMPTED. `deploy-pages`
@@ -343,25 +435,23 @@ jobs:
             echo "Settings > Pages > Source must be GitHub Actions."
             echo "The page was built and walked its own road in the steps above:"
             echo "nothing here is about this repository's claims, and the battery"
-            echo "is the other three jobs."
+            echo "and the Linux/macOS world contracts are checked by their own jobs."
           fi
       - if: steps.site.outputs.on == 'true'
         id: deployment
         uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128   # v5.0.0
-      # ── AND A RED FROM THIS JOB SAYS IT IS THIS JOB. Only the linux battery
-      # posted a commit status, so a failing deployment left none at all and the
-      # run read as a mystery: three of them in a row, with the battery green on
-      # three platforms, and the job had to be named by asking the API for it.
-      # The page is built and walked before this step, so a red here is about
-      # publishing and not about the repository, and the status says which.
+      # Keep the actual failed step and its output public, including failures
+      # before publishing. A successful tee cannot turn a child failure green.
       - if: failure()
+        name: what pages said
         env:
           GH_TOKEN: ${{ github.token }}
+          PAGES_STEPS: ${{ toJSON(steps) }}
         run: |
-          BODY=$(python3 -c 'import json;print(json.dumps({"state":"failure","context":"pages-publish","description":"the page built and walked its road; publishing it failed with Pages switched on. The battery is the other jobs"}))')
+          python3 bin/ci-pages.py --context pages-publish --status pages-status.json
           curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            -d "$BODY" > /dev/null
+            -d @pages-status.json > /dev/null
 
   # ── THE ROAD A STRANGER'S CI WALKS. `uses: ./` runs action.yml from this
   # very push: the published binary is fetched at a pinned tag, its bytes
@@ -370,7 +460,11 @@ jobs:
   # push that bumps VERSION the new tag has no assets yet, and this job is
   # about the road. The default tag is held to VERSION by the battery.
   action:
-    runs-on: ubuntu-latest
+    # the image is named, not "latest": ubuntu-latest began moving to Ubuntu 26
+    # on 19 October 2026 and the battery went red on the linux job (and the
+    # action job, which downloads the released linux binary) with no change in
+    # this tree. A named image moves when somebody here moves it.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
       - name: a tree with a dead row is refused
@@ -378,16 +472,19 @@ jobs:
         continue-on-error: true
         uses: ./
         with:
-          version: v0.2.3
+          version: v0.2.5
           tree: .github/action-fixtures/dead
       - name: and that refusal is this job's negative control
         id: control
-        run: test "${{ steps.dead.outcome }}" = failure
+        # a red without a refusal at an address is not this control: on 19.10
+        # the dead tree went red with no address at all, and that red passed
+        # here for a refusal
+        run: test "${{ steps.dead.outcome }}" = failure && test "${{ steps.dead.outputs.refusals }}" -ge 1
       - name: a clean tree holds
         id: clean
         uses: ./
         with:
-          version: v0.2.3
+          version: v0.2.5
           tree: .github/action-fixtures/clean
       # and the cobbler wears the shoes: the same one step, over this very
       # repository, on every push
@@ -395,7 +492,7 @@ jobs:
         id: home
         uses: ./
         with:
-          version: v0.2.3
+          version: v0.2.5
           tree: .
       # ── THE MOUTH THIS JOB DID NOT HAVE. The morning this road went red,
       # nothing posted a word and the finding came from asking the API by
